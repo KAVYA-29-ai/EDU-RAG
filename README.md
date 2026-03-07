@@ -194,7 +194,7 @@ See `backend/.env.example` for required keys. Never commit `.env` files.
 **Team Leader:** Khushi Sara ([GitHub](https://github.com/khushisara1))
 **Contributors:** Kavya Rajput ([GitHub](https://github.com/KAVYA-29-ai)), Harshita Shakya ([GitHub](https://github.com/HarshitaShakya))
 
-**Repository:** [MINIRAG2](https://github.com/KAVYA-29-ai/MINIRAG2)
+**Repository:** [MINIRAG2](https://github.com/KAVYA-29-ai/MINI-RAG)
 
 ---
 
@@ -208,7 +208,7 @@ For detailed guides, features, and architecture, see the [documentation](documen
 
 **Made with ❤️ for education**
 
-[Report Bug](https://github.com/KAVYA-29-ai/MINIRAG2/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINIRAG2/issues)
+[Report Bug](https://github.com/KAVYA-29-ai/MINI-RAG/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINI-RAG/issues)
 
 </div>
 
@@ -527,6 +527,6 @@ https://github.com/KAVYA-29-ai/MINIRAG2
 
 **Made with ❤️ for education**
 
-[Report Bug](https://github.com/KAVYA-29-ai/MINIRAG2/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINIRAG2/issues)
+[Report Bug](https://github.com/KAVYA-29-ai/MINI-RAG/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINI-AG/issues)
 
 </div>
