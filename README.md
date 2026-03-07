@@ -1,5 +1,6 @@
 <div align="center">
 
+#version 2 edurag uploaded 
 # 🎓 EduRag - AI-Powered Educational RAG Platform
 
 <p align="center">
