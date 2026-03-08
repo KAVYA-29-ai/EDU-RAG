@@ -192,7 +192,7 @@ See `backend/.env.example` for required keys. Never commit `.env` files.
 
 ## 👥 Project Team
 
-**Team Leader:** Khushi Sara ([GitHub](https://github.com/khushisara1))
+**Team Leader:** Khushi Saraswat ([GitHub](https://github.com/khushisara1))
 **Contributors:** Kavya Rajput ([GitHub](https://github.com/KAVYA-29-ai)), Harshita Shakya ([GitHub](https://github.com/HarshitaShakya))
 
 **Repository:** [MINIRAG2](https://github.com/KAVYA-29-ai/MINI-RAG)
