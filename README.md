@@ -1,217 +1,43 @@
-# Version 2 uploaded succesfully 
-https://minirag-2.vercel.app/
 <div align="center">
-   
-# 🚀 EDURAG — Enterprise Knowledge Intelligence Platform
+
+# 🎓 EduRag - AI-Powered Educational RAG Platform
 
 <p align="center">
-   <strong>Semantic Search & Retrieval-Augmented Generation (RAG) for teams, educators, and students — powered by Gemini AI & Supabase</strong>
+  <strong>Retrieval Augmented Generation (RAG) platform for modern education — powered by Gemini AI & Supabase</strong>
 </p>
 
 <p align="center">
-   <img src="https://img.shields.io/badge/React-18.2.0-61DAFB?style=for-the-badge&logo=react&logoColor=white" alt="React" />
-   <img src="https://img.shields.io/badge/FastAPI-0.109.0-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
-   <img src="https://img.shields.io/badge/Gemini_AI-Multimodal-8E75B2?style=for-the-badge&logo=google&logoColor=white" alt="Gemini" />
-   <img src="https://img.shields.io/badge/Supabase-100%25-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" />
-   <img src="https://img.shields.io/badge/Vercel-Deployed-000000?style=for-the-badge&logo=vercel&logoColor=white" alt="Vercel" />
+  <img src="https://img.shields.io/badge/React-18.2.0-61DAFB?style=for-the-badge&logo=react&logoColor=white" alt="React" />
+  <img src="https://img.shields.io/badge/FastAPI-0.109.0-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Gemini_AI-Multimodal-8E75B2?style=for-the-badge&logo=google&logoColor=white" alt="Gemini" />
+  <img src="https://img.shields.io/badge/Supabase-100%25-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" />
+  <img src="https://img.shields.io/badge/Vercel-Deployed-000000?style=for-the-badge&logo=vercel&logoColor=white" alt="Vercel" />
+  <img src="https://img.shields.io/github/workflow/status/KAVYA-29-ai/MINIRAG2/CI?label=build&style=for-the-badge" alt="Build Status" />
+  <img src="https://img.shields.io/github/license/KAVYA-29-ai/MINIRAG2?style=for-the-badge" alt="License" />
 </p>
 
 </div>
 
 ---
 
-## 🌟 About the Project
-
-MINIRAG2 is an enterprise platform combining semantic search and Retrieval-Augmented Generation (RAG) to deliver accurate, source-backed answers from documents and knowledge bases. Designed for internal teams, educators, and students.
-
-**Key Goals:**
-- Reliable, explainable answers with source citations
-- Accessible search & Q&A for non-technical users
-- Feedback, analytics, and continuous improvement
-
-**Live Deployment:** Frontend on Vercel, backend APIs under `/api`.
-
----
-
-## ❓ Problem Statement
-
-Organizations have growing volumes of documents. Simple keyword search is not enough. MINIRAG2 solves:
-- Fast, accurate answers with source citations
-- Knowledge spread across formats and locations
-- Feedback loop for continuous improvement
-
----
-
-## 🏗️ System Architecture
-
-**Components:**
-- Frontend (React): UI, query input, result rendering, feedback
-- Backend (FastAPI/Python): API endpoints, RAG orchestration, auth, feedback
-- Vector store: document vectors for similarity search
-- LLM provider: generates answers from context
-- Database (Supabase/Postgres): users, docs, feedback, analytics
-
-**High-level Data Flow:**
-
-```mermaid
-flowchart LR
-   U[User] -->|query| F(Frontend)
-   F -->|POST /api/rag| B(Backend)
-   B -->|retrieve| V[Vector Store]
-   B -->|fetch metadata| DB[(Supabase/Postgres)]
-   B -->|prompt| LLM[LLM provider]
-   LLM --> B
-   B --> F
-```
-
----
-
-## 🛠️ Technology Stack
-
-- **Frontend:** React, CSS Modules, Axios
-- **Backend:** Python 3.8+, FastAPI, Uvicorn
-- **Database:** Supabase/Postgres
-- **Vector Store:** Supabase vector extension or external
-- **AI/ML:** Gemini AI, OpenAI (optional)
-- **Deployment:** Vercel, GitHub Actions (optional)
-
----
-
-## 🔄 Implementation Flow
-
-1. **Document Ingestion:** Extract text, normalize, split into passages
-2. **Embedding Generation:** Convert passages to vector embeddings
-3. **Vector Store:** Store embeddings with metadata
-4. **Query Handling:** User query → embedding → top-K similar passages
-5. **LLM Synthesis:** Compose prompt, generate answer with citations
-6. **Feedback & Iteration:** Users rate answers, feedback improves ranking
-
----
-
-## 🗄️ Database Design
-
-**Main Tables:**
-- `users`: id, email, hashed_password, role, created_at
-- `documents`: id, title, source_url, uploaded_by, created_at
-- `passages`: id, document_id, text, chunk_index, metadata
-- `embeddings`: id, passage_id, vector, created_at
-- `feedback`: id, user_id, query, response, rating, comment
-
----
-
-## 📡 API Reference
-
-**Auth:**
-- `POST /api/auth/login` — login
-- `POST /api/auth/register` — register
-- `GET /api/auth/me` — profile
-
-**RAG/Search:**
-- `POST /api/rag` — semantic search
-- `POST /api/rag/upload-pdf` — upload PDF
-- `POST /api/rag/index-pdf/{id}` — index PDF
-- `GET /api/rag/pdfs` — list PDFs
-- `DELETE /api/rag/pdfs/{id}` — delete PDF
-
-**Feedback:**
-- `POST /api/feedback` — submit feedback
-
-**Analytics:**
-- `GET /api/analytics/usage` — usage metrics
-
----
-
-## ✨ Features
-
-### 🎓 For Students
-- RAG Search — ask questions, get AI answers with citations
-- PDF Upload — organize study materials
-- Peer Discovery — connect with classmates
-- Anonymous Feedback — share thoughts with teachers
-- Profile Management — customize name/avatar
-- **Unique Chatroom** — real-time, secure, interactive discussions
-
-### 👨‍🏫 For Teachers
-- Content Upload & Indexing
-- Student Analysis — trending topics
-- Feedback Dashboard
-- Analytics Overview
-- RAG Search
-
-### 🔧 For Admins
-- User Management
-- System Analytics
-- PDF Management
-- RAG Search
-- Feedback Review
-
----
-
-## ✅ Completed Features
-
-- React SPA with role-based dashboards
-- Custom JWT authentication
-- 100% Supabase migration
-- PDF upload & indexing
-- RAG semantic search
-- AI-generated answers with citations
-- Keyword fallback search
-- Search history tracking
-- Trending topics analytics
-- Feedback systems
-- User management
-- System analytics dashboard
-- Animated UI
-- Vercel serverless deployment
-- CORS for Vercel, Codespaces, localhost
-
----
-
-## 🗺️ Future Roadmap
-
-- Forgot Password (OTP reset)
-- Google OAuth integration
-- Mobile optimization
-- Real-time collaboration
-- Advanced analytics
-- Video content support
-- Batch document processing
-- Improved Hindi/Hinglish support
-
----
-
-## 🚀 Deployment & Local Development
-
-**Frontend:** Vercel project from GitHub repo
-**Backend:** Vercel Serverless Functions or separate deployment (Railway, Fly, Heroku)
-
-**Environment Variables:**
-See `backend/.env.example` for required keys. Never commit `.env` files.
-
----
-
-## 👥 Project Team
-
-**Team Leader:** Khushi Saraswat ([GitHub](https://github.com/khushisara1))
-**Contributors:** Kavya Rajput ([GitHub](https://github.com/KAVYA-29-ai)), Harshita Shakya ([GitHub](https://github.com/HarshitaShakya))
-
-**Repository:** [MINIRAG2](https://github.com/KAVYA-29-ai/MINI-RAG)
-
----
-
-## 📚 More Information
-
-For detailed guides, features, and architecture, see the [documentation](documentation/01_about_project.md) folder.
-
 <div align="center">
-
-### ⭐ Star this repository if you find it useful!
-
-**Made with ❤️ for education**
-
-[Report Bug](https://github.com/KAVYA-29-ai/MINI-RAG/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINI-RAG/issues)
-
+  <img src="docs/screenshots/dashboard.png" alt="EduRag Dashboard Screenshot" width="700"/>
 </div>
+
+---
+
+## ⚙️ How it works
+
+1. **User Authentication:**
+   - Users register/login with institution ID and password. JWT tokens are issued for secure access.
+2. **PDF Upload & Indexing:**
+   - Teachers/Admins upload PDFs. Text and images are extracted, chunked, and embedded using Gemini AI. All data is stored in Supabase.
+3. **RAG Search:**
+   - Students/Teachers/Admins can ask questions. The system finds relevant chunks using vector similarity and generates an answer with source citations using Gemini.
+4. **Feedback & Analytics:**
+   - Teachers submit feedback to admins. Analytics dashboards show usage, trending topics, and engagement.
+
+See the [docs/SETUP.md](docs/SETUP.md) for local setup and [docs/API.md](docs/API.md) for API reference.
 
 ---
 
@@ -528,6 +354,6 @@ https://github.com/KAVYA-29-ai/MINIRAG2
 
 **Made with ❤️ for education**
 
-[Report Bug](https://github.com/KAVYA-29-ai/MINI-RAG/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINI-AG/issues)
+[Report Bug](https://github.com/KAVYA-29-ai/MINIRAG2/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINIRAG2/issues)
 
 </div>
