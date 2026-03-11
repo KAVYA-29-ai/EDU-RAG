@@ -1,12 +1,11 @@
 """
 Vercel Serverless Function — entry point for FastAPI backend.
-Vercel auto-detects the `app` variable (ASGI) and wraps it.
 """
 import sys
 import os
 
-# Add backend/ to Python path so all imports work
+# ← YEH ADD KARO — backend folder ko path mein daalo
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-# Import the FastAPI app — Vercel picks this up automatically
-from main import app
+from backend.main import app

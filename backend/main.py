@@ -14,8 +14,8 @@ from pathlib import Path
 # Load environment variables
 load_dotenv()
 
-# Import routers
-from .routers import auth, users, feedback, student_feedback, rag, analytics, chat
+# Import routers (absolute imports for Vercel)
+from routers import auth, users, feedback, student_feedback, rag, analytics, chat
 
 # Create FastAPI app
 app = FastAPI(
