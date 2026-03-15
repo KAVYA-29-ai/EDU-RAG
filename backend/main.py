@@ -19,20 +19,6 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import time
 from collections import defaultdict, deque
-# Global error handler for HTTPException and generic Exception
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail or "HTTP error occurred"},
-    )
-
-@app.exception_handler(Exception)
-async def generic_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-    )
 
 # --- In-memory rate limiting middleware (per-IP, 60 req/min) ---
 RATE_LIMIT = 60  # requests
@@ -55,8 +41,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         bucket.append(now)
         return await call_next(request)
 
-app.add_middleware(RateLimitMiddleware)
-
 # --- Security headers middleware ---
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -69,7 +53,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Content-Security-Policy"] = "default-src 'self'"
         return response
 
-app.add_middleware(SecurityHeadersMiddleware)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -84,11 +67,30 @@ load_dotenv()
 from routers import auth, users, feedback, student_feedback, rag, analytics, chat
 
 # Create FastAPI app
+
 app = FastAPI(
     title="EduRag API",
     description="Backend API for EduRag - Educational RAG Platform",
     version="1.0.0"
 )
+
+# Global error handler for HTTPException and generic Exception
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail or "HTTP error occurred"},
+    )
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # CORS configuration - Allow Vercel frontend + dev origins + Codespaces
 app.add_middleware(
