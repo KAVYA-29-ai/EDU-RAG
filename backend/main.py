@@ -14,7 +14,62 @@ It provides API endpoints for:
 All persistent data is stored in Supabase PostgreSQL.
 Routers are imported from the backend/routers/ directory.
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+import time
+from collections import defaultdict, deque
+# Global error handler for HTTPException and generic Exception
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail or "HTTP error occurred"},
+    )
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+# --- In-memory rate limiting middleware (per-IP, 60 req/min) ---
+RATE_LIMIT = 60  # requests
+RATE_PERIOD = 60  # seconds
+_ip_buckets = defaultdict(lambda: deque())
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        bucket = _ip_buckets[ip]
+        # Remove old timestamps
+        while bucket and now - bucket[0] > RATE_PERIOD:
+            bucket.popleft()
+        if len(bucket) >= RATE_LIMIT:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Try again later."},
+            )
+        bucket.append(now)
+        return await call_next(request)
+
+app.add_middleware(RateLimitMiddleware)
+
+# --- Security headers middleware ---
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse

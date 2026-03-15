@@ -1,3 +1,14 @@
+---
+
+## 🔒 Security & Robustness Features
+
+- **Global Error Handling:** All backend errors are returned as consistent JSON responses for easier debugging and user feedback.
+- **Rate Limiting:** In-memory rate limiting (60 requests per minute per IP) protects the API from abuse and accidental overload.
+- **Security Headers:** All backend responses include secure HTTP headers (CSP, HSTS, X-Frame-Options, etc.) to mitigate common web vulnerabilities.
+- **Authentication:** JWT-based authentication is enforced for all protected endpoints. Users must log in to receive a token.
+- **Authorization:** Role-based access control (admin, teacher, student) is checked on sensitive endpoints to prevent unauthorized actions.
+- **Password Hashing:** User passwords are securely hashed using bcrypt before storage (never stored in plain text).
+
 <div align="center">
 
 # 🎓 EduRag - AI-Powered Educational RAG Platform
