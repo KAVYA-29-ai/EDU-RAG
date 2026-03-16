@@ -215,6 +215,21 @@ const AdminDashboard = () => {
     }
   };
 
+  // Refetch users when switching to User Management tab
+  useEffect(() => {
+    if (activeTab === 'users') {
+      setLoading(true);
+      usersAPI.getAll().then(data => {
+        setUsers(data || []);
+        setLoading(false);
+      }).catch(err => {
+        setUsers([]);
+        setLoading(false);
+        console.error('Error reloading users:', err);
+      });
+    }
+  }, [activeTab]);
+
   if (loading) {
     return (
       <div className="admin-dashboard loading-screen">
