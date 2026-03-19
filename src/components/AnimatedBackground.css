@@ -1,61 +1,96 @@
+
 .animated-bg-container {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(135deg, #0a1128 0%, #1a0f35 100%);
+  width: 100vw;
+  height: 100vh;
+  background: linear-gradient(120deg, #111 0%, #222 100%);
   z-index: -1;
   overflow: hidden;
   pointer-events: none;
 }
 
+
 .blob {
   position: absolute;
   border-radius: 50%;
   filter: blur(60px);
-  opacity: 0.6;
+  opacity: 0.5;
   will-change: transform;
+  mix-blend-mode: lighten;
+  animation-timing-function: ease-in-out;
 }
+
 
 .blob-1 {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle at 30% 30%, #667eea, #764ba2);
-  top: -100px;
-  left: 50px;
-  animation: float1 15s ease-in-out infinite;
-  box-shadow: 0 0 80px rgba(102, 126, 234, 0.6), 
-              0 0 120px rgba(118, 75, 162, 0.4);
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle at 30% 30%, #fff 0%, #e0e0e0 60%, #bbb 100%, transparent 100%);
+  top: -120px;
+  left: 30px;
+  animation: float1 14s ease-in-out infinite;
+  box-shadow: 0 0 120px #fff6, 0 0 180px #bbb4;
 }
+
 
 .blob-2 {
-  width: 350px;
-  height: 350px;
-  background: radial-gradient(circle at 70% 70%, #00d9ff, #667eea);
-  bottom: -50px;
-  right: 100px;
-  animation: float2 18s ease-in-out infinite;
-  box-shadow: 0 0 80px rgba(0, 217, 255, 0.6),
-              0 0 120px rgba(102, 126, 234, 0.4);
+  width: 340px;
+  height: 340px;
+  background: radial-gradient(circle at 70% 70%, #444 0%, #bbb 60%, #fff 100%, transparent 100%);
+  bottom: -60px;
+  right: 80px;
+  animation: float2 17s ease-in-out infinite;
+  box-shadow: 0 0 100px #bbb6, 0 0 160px #fff3;
 }
 
+
 .blob-3 {
-  width: 300px;
-  height: 300px;
-  background: radial-gradient(circle at 50% 50%, #764ba2, #00d9ff);
-  top: 50%;
-  right: 50px;
-  animation: float3 20s ease-in-out infinite;
-  box-shadow: 0 0 80px rgba(118, 75, 162, 0.5),
-              0 0 120px rgba(0, 217, 255, 0.3);
+  width: 320px;
+  height: 320px;
+  background: radial-gradient(circle at 50% 50%, #fff 0%, #bbb 40%, #444 80%, #111 100%, transparent 100%);
+  top: 55%;
+  right: 40px;
+  animation: float3 19s ease-in-out infinite;
+  box-shadow: 0 0 100px #fff3, 0 0 160px #4446;
 }
+
 
 .glow-orb {
   position: absolute;
   border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, rgba(0, 217, 255, 0.3), transparent);
+  background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.10), transparent 70%);
   animation: pulse 4s ease-in-out infinite;
+  box-shadow: 0 0 32px 8px #fff1, 0 0 64px 16px #bbb1;
+}
+
+/* Animated glowing lines (vibes) */
+.vibe-line {
+  position: absolute;
+  width: 60vw;
+  height: 2px;
+  left: 20vw;
+  background: linear-gradient(90deg, transparent, #fff 30%, #bbb 60%, #444 100%, transparent);
+  opacity: 0.12;
+  filter: blur(1.5px);
+  border-radius: 2px;
+  animation: vibe-move 8s linear infinite;
+}
+.vibe-line2 {
+  top: 30vh;
+  animation-delay: 2s;
+}
+.vibe-line3 {
+  top: 60vh;
+  animation-delay: 4s;
+}
+
+@keyframes vibe-move {
+  0% { left: 20vw; opacity: 0.18; }
+  40% { opacity: 0.32; }
+  50% { left: 10vw; opacity: 0.22; }
+  60% { opacity: 0.32; }
+  100% { left: 20vw; opacity: 0.18; }
 }
 
 .orb-1 {

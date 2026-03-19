@@ -8,9 +8,12 @@ body {
   font-family: 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: transparent;
+  background: #000;
+  color: #fff;
   min-height: 100vh;
+  transition: background 0.3s, color 0.3s;
 }
+
 
 html, body, #root {
   width: 100%;
@@ -23,13 +26,49 @@ button {
   border: none;
   outline: none;
   font-size: 1rem;
+  background: rgba(24,24,24,0.95);
+  color: #fff;
+  border-radius: 0.5rem;
+  box-shadow: 0 0 8px 2px #fff2, 0 0 24px 4px #fff1;
+  transition: background 0.2s, box-shadow 0.2s, color 0.2s;
+}
+button:hover, button:focus {
+  background: #232323;
+  color: #fff;
+  box-shadow: 0 0 16px 4px #fff6, 0 0 32px 8px #fff2;
 }
 
 input, textarea, select {
   font-family: inherit;
+  background: rgba(24,24,24,0.95);
+  color: #fff;
+  border: 1px solid #222;
+  border-radius: 0.4rem;
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 0 8px 2px #fff2;
+  transition: border 0.2s, box-shadow 0.2s;
+}
+input:focus, textarea:focus, select:focus {
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 12px 2px #fff8;
 }
 
 a {
   text-decoration: none;
-  color: inherit;
+  color: #fff;
+  transition: color 0.2s;
+}
+a:hover {
+  color: #fff;
+  text-shadow: 0 0 8px #fff8;
+}
+
+@media (max-width: 768px) {
+  body {
+    font-size: 0.97rem;
+  }
+  button, input, textarea, select {
+    font-size: 0.97rem;
+  }
 }

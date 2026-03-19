@@ -1,4 +1,38 @@
 .app {
   width: 100%;
   min-height: 100vh;
+  background: #101014;
+  color: #fff;
+  font-family: 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  box-sizing: border-box;
+  transition: background 0.5s cubic-bezier(.4,0,.2,1), color 0.5s cubic-bezier(.4,0,.2,1);
+}
+
+/* Glowing effect for main containers */
+.glow-container {
+  box-shadow: 0 0 32px 8px #fff2, 0 0 80px 8px #fff1;
+  border-radius: 1.5rem;
+  background: rgba(20,20,25,0.95);
+  padding: 2rem;
+  margin: 2rem 0;
+  transition: box-shadow 0.5s cubic-bezier(.4,0,.2,1), background 0.5s cubic-bezier(.4,0,.2,1), transform 0.4s cubic-bezier(.4,0,.2,1);
+}
+.glow-container:hover {
+  box-shadow: 0 0 64px 16px #fff4, 0 0 120px 16px #fff2;
+  transform: scale(1.015) translateY(-2px);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .app {
+    padding: 0.5rem;
+  }
+  .glow-container {
+    padding: 1rem;
+    margin: 1rem 0;
+  }
 }
