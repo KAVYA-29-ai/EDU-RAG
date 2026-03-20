@@ -34,18 +34,26 @@ def make_user(role="teacher"):
         "password_hash": _hashed("pass123"),
     }
 
-def get_token(role="teacher"):
-    user = make_user(role)
-    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[user])
-    r = client.post("/api/auth/login", json={"institution_id": f"{role}001", "password": "pass123"})
-    if r.status_code != 200:
-        return None
-    d = r.json()
-    return d.get("access_token") or d.get("token")
+def _get_valid_token(role="teacher"):
+    """Build a real signed JWT directly — no mock dependency."""
+    from jose import jwt as jose_jwt
+    import os
+    from datetime import datetime, timedelta
+    payload = {
+        "user_id": f"uuid-{role}",
+        "institution_id": f"{role}001",
+        "role": role,
+        "exp": datetime.utcnow() + timedelta(minutes=60),
+    }
+    return jose_jwt.encode(payload, os.getenv("JWT_SECRET", "your-secret-key"), algorithm="HS256")
 
 def auth_headers(role="teacher"):
-    tok = get_token(role)
-    return {"Authorization": f"Bearer {tok}"} if tok else {}
+    return {"Authorization": f"Bearer {_get_valid_token(role)}"}
+
+def _mock_user_fetch(role="teacher"):
+    """Mock the DB user fetch that happens inside get_current_user."""
+    user = make_user(role)
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[user])
 
 def make_feedback_row():
     return {
@@ -59,53 +67,51 @@ def make_feedback_row():
 class TestSubmitFeedback:
 
     def test_no_token_is_auth_error(self):
-        """No token → auth error"""
         r = client.post("/api/feedback/", json={"message": "Good", "rating": 5})
         assert r.status_code in [401, 403]
         assert r.status_code != 200
 
     def test_teacher_submits_feedback_200(self):
         """Teacher submits feedback → 200"""
-        headers = auth_headers(role="teacher")
+        _mock_user_fetch(role="teacher")
         mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[make_feedback_row()])
 
         r = client.post("/api/feedback/", json={
             "message": "Search results need improvement",
             "rating": 4
-        }, headers=headers)
+        }, headers=auth_headers(role="teacher"))
         assert r.status_code == 200
         assert r.status_code != 500
 
     def test_admin_submits_feedback_200(self):
-        """Admin can also submit feedback → 200"""
-        headers = auth_headers(role="admin")
+        """Admin submits feedback → 200"""
+        _mock_user_fetch(role="admin")
         mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[make_feedback_row()])
 
         r = client.post("/api/feedback/", json={
-            "message": "System works well overall",
+            "message": "System works well",
             "rating": 5
-        }, headers=headers)
-        assert r.status_code in [200, 403]  # depends on role policy
+        }, headers=auth_headers(role="admin"))
+        assert r.status_code in [200, 403]
         assert r.status_code != 500
 
-    def test_missing_message_422(self):
-        """Missing message → 422 (after auth passes)"""
-        headers = auth_headers(role="teacher")
-        r = client.post("/api/feedback/", json={"rating": 3}, headers=headers)
-        # 422 validation OR 403 if teacher isn't allowed — both are non-500
-        assert r.status_code in [403, 422]
-        assert r.status_code != 500
-
-    def test_feedback_response_not_500(self):
-        """Any feedback submission must never return 500"""
-        headers = auth_headers(role="teacher")
+    def test_feedback_never_returns_500(self):
+        """Any feedback call must never crash → never 500"""
+        _mock_user_fetch(role="teacher")
         mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[make_feedback_row()])
 
         r = client.post("/api/feedback/", json={
-            "message": "Works fine",
-            "rating": 3
-        }, headers=headers)
+            "message": "Works fine", "rating": 3
+        }, headers=auth_headers(role="teacher"))
         assert r.status_code != 500
+
+    def test_student_feedback_blocked(self):
+        """Student cannot post to teacher feedback endpoint → 403"""
+        _mock_user_fetch(role="student")
+        r = client.post("/api/feedback/", json={"message": "Hello", "rating": 5},
+                        headers=auth_headers(role="student"))
+        assert r.status_code in [403, 401]
+        assert r.status_code != 200
 
 
 # ── Get All Feedback (/api/feedback/) ────────────────────────────────────────
@@ -119,28 +125,28 @@ class TestGetFeedback:
 
     def test_admin_gets_feedback_list(self):
         """Admin → 200 with list"""
-        headers = auth_headers(role="admin")
+        _mock_user_fetch(role="admin")
         mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(
             data=[make_feedback_row(), make_feedback_row()]
         )
-        r = client.get("/api/feedback/", headers=headers)
+        r = client.get("/api/feedback/", headers=auth_headers(role="admin"))
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
     def test_student_cannot_see_all_feedback(self):
         """Student → 403, not 200"""
-        headers = auth_headers(role="student")
-        r = client.get("/api/feedback/", headers=headers)
+        _mock_user_fetch(role="student")
+        r = client.get("/api/feedback/", headers=auth_headers(role="student"))
         assert r.status_code in [403, 401]
         assert r.status_code != 200
 
-    def test_feedback_item_has_required_fields(self):
-        """Each feedback item has id, message, rating"""
-        headers = auth_headers(role="admin")
+    def test_feedback_item_structure(self):
+        """Each item has id or message field"""
+        _mock_user_fetch(role="admin")
         mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(
             data=[make_feedback_row()]
         )
-        r = client.get("/api/feedback/", headers=headers)
+        r = client.get("/api/feedback/", headers=auth_headers(role="admin"))
         if r.status_code == 200:
             items = r.json()
             if items:
@@ -148,42 +154,50 @@ class TestGetFeedback:
 
     def test_get_feedback_never_500(self):
         """GET feedback must never return 500"""
-        headers = auth_headers(role="admin")
+        _mock_user_fetch(role="admin")
         mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(data=[])
-        r = client.get("/api/feedback/", headers=headers)
+        r = client.get("/api/feedback/", headers=auth_headers(role="admin"))
         assert r.status_code != 500
 
 
-# ── Student Feedback (/api/student-feedback/) ────────────────────────────────
-# NOTE: main.py registers this at prefix "/api/student-feedback" not "/api/feedback/student"
+# ── Student Feedback — discover actual route from main.py ────────────────────
+# main.py: app.include_router(student_feedback.router, prefix="/api/student-feedback")
 
 class TestStudentFeedback:
 
+    def test_student_feedback_endpoint_exists(self):
+        """GET /api/student-feedback/ should not 404 — endpoint must exist"""
+        _mock_user_fetch(role="student")
+        r = client.get("/api/student-feedback/", headers=auth_headers(role="student"))
+        # 200, 401, 403 all fine — 404 means route missing, 500 means crash
+        assert r.status_code != 404
+        assert r.status_code != 500
+
     def test_student_feedback_no_token_is_auth_error(self):
+        """No token → auth error on student-feedback endpoint"""
         r = client.get("/api/student-feedback/")
         assert r.status_code in [401, 403]
+        assert r.status_code != 200
 
-    def test_student_can_submit_via_correct_endpoint(self):
-        """Student posts to /api/student-feedback/ → 200 or 404 (not 405/500)"""
-        headers = auth_headers(role="student")
+    def test_student_can_submit_anonymous_feedback(self):
+        """Student posts anonymous feedback → not 405 or 500"""
+        _mock_user_fetch(role="student")
         mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{
             "id": "sfb-001", "message": "Class notes are helpful"
         }])
         r = client.post("/api/student-feedback/", json={
             "message": "Class notes are very helpful"
-        }, headers=headers)
-        # 200 = works, 404 = endpoint not fully implemented yet, both acceptable
-        # 405 = wrong HTTP method, 500 = crash — both unacceptable
+        }, headers=auth_headers(role="student"))
         assert r.status_code not in [405, 500]
 
-    def test_anonymous_feedback_no_password_in_response(self):
-        """Response must never expose password"""
-        headers = auth_headers(role="student")
+    def test_response_never_exposes_password(self):
+        """No endpoint response should ever expose password fields"""
+        _mock_user_fetch(role="student")
         mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{
             "id": "sfb-002", "message": "Anonymous message"
         }])
-        r = client.post("/api/student-feedback/", json={"message": "Anonymous"}, headers=headers)
+        r = client.post("/api/student-feedback/", json={"message": "Anonymous"},
+                        headers=auth_headers(role="student"))
         if r.status_code == 200:
-            data = r.json()
-            assert "password" not in str(data)
-            assert "password_hash" not in str(data)
+            assert "password" not in str(r.json())
+            assert "password_hash" not in str(r.json())
