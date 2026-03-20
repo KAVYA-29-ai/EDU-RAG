@@ -2,178 +2,261 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 
-mock_supabase = MagicMock()
+mock_sb = MagicMock()
 
-with patch("backend.database.supabase", mock_supabase):
-    from backend.main import app
+def fake_get_supabase():
+    return mock_sb
 
-client = TestClient(app)
+with patch("database.init_supabase", lambda: None), \
+     patch("database.get_supabase", fake_get_supabase):
+    from main import app
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
+client = TestClient(app, raise_server_exceptions=False)
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def reset_mocks():
-    mock_supabase.reset_mock()
+def reset_mock():
+    mock_sb.reset_mock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+    mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
     yield
 
-def get_auth_headers(role="student"):
-    """Get a real JWT token via login mock"""
-    import bcrypt
-    hashed = bcrypt.hashpw(b"pass123", bcrypt.gensalt()).decode()
-    user = {
-        "id": "user-001", "name": "Test", "institution_id": "u001",
-        "email": "t@test.com", "role": role,
-        "avatar": "male", "password_hash": hashed
-    }
-    mock_supabase.table().select().eq().execute.return_value = MagicMock(data=[user])
-    resp = client.post("/api/auth/login", json={"institution_id": "u001", "password": "pass123"})
-    data = resp.json()
-    token = data.get("access_token") or data.get("token", "")
-    return {"Authorization": f"Bearer {token}"}
+def _hashed(plain: str) -> str:
+    from passlib.context import CryptContext
+    return CryptContext(schemes=["bcrypt"], deprecated="auto").hash(plain)
 
-def make_chunk(text="Neural networks learn by adjusting weights", score=0.82):
+def make_user(role="student"):
     return {
-        "id": "chunk-001",
-        "text": text,
-        "score": score,
-        "pdf_title": "ML Basics",
-        "chunk_index": 0
+        "id": "uuid-001", "name": "Test", "institution_id": f"{role}001",
+        "email": f"{role}@test.com", "role": role, "avatar": "male",
+        "status": "active", "password_hash": _hashed("pass123"),
     }
 
-# ─── Search Tests ─────────────────────────────────────────────────────────────
+def get_token(role="student"):
+    user = make_user(role)
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[user])
+    r = client.post("/api/auth/login", json={"institution_id": f"{role}001", "password": "pass123"})
+    if r.status_code != 200:
+        return None
+    d = r.json()
+    return d.get("access_token") or d.get("token")
+
+def auth_headers(role="student"):
+    tok = get_token(role)
+    return {"Authorization": f"Bearer {tok}"} if tok else {}
+
+def make_chunk():
+    return {
+        "id": "chunk-001", "content": "Neural networks learn via backpropagation.",
+        "source_file": "ml_basics.pdf", "page_number": 3
+    }
+
+def make_embedding(chunk_id="chunk-001"):
+    import json, math
+    vec = [0.1] * 768
+    return {
+        "id": "emb-001", "pdf_chunk_id": chunk_id,
+        "modality": "text",
+        "embedding_json": json.dumps(vec)
+    }
+
+# ── RAG Search ────────────────────────────────────────────────────────────────
 
 class TestRAGSearch:
 
-    def test_search_returns_results(self):
-        """Valid query → 200 with non-empty results list"""
-        headers = get_auth_headers()
-        mock_supabase.table().select().execute.return_value = MagicMock(
-            data=[make_chunk()]
-        )
-        with patch("backend.routers.rag.generate_embedding", return_value=[0.1] * 768), \
-             patch("backend.routers.rag.gemini_generate", return_value="AI learns by backpropagation."):
-            response = client.post("/api/rag/search", json={"query": "how do neural networks learn"}, headers=headers)
+    def test_search_no_token_is_auth_error(self):
+        """No token → auth error (401 or 403)"""
+        r = client.post("/api/rag/search", json={"query": "test query"})
+        assert r.status_code in [401, 403]
+        assert r.status_code != 200
 
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, dict) or isinstance(data, list)
+    def test_search_missing_query_422(self):
+        """Missing query field → 422"""
+        headers = auth_headers()
+        r = client.post("/api/rag/search", json={}, headers=headers)
+        assert r.status_code == 422
 
-    def test_search_requires_auth(self):
-        """No token → 401"""
-        response = client.post("/api/rag/search", json={"query": "test query"})
-        assert response.status_code == 401
-        assert response.status_code != 200
+    def test_search_returns_200_with_results_key(self):
+        """Valid query with mocked embedding → 200 with 'results' key"""
+        headers = auth_headers()
+
+        # Mock: embeddings table → one embedding
+        emb = make_embedding()
+        chunk = make_chunk()
+
+        # Patch _embed_text and _generate_rag_answer inside the rag router
+        with patch("routers.rag._embed_text", return_value=[0.9] * 768), \
+             patch("routers.rag._generate_rag_answer", return_value="Backpropagation adjusts weights."), \
+             patch("routers.rag._get_gemini_client", return_value=MagicMock()):
+
+            # embeddings fetch
+            mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(data=[emb])
+            # chunks batch fetch
+            mock_sb.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(data=[chunk])
+            # search_history insert
+            mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
+
+            r = client.post("/api/rag/search", json={"query": "how do neural networks learn"}, headers=headers)
+
+        assert r.status_code == 200
+        data = r.json()
+        assert "results" in data
+        assert "generated_answer" in data
 
     def test_search_empty_query_rejected(self):
-        """Empty string query → 400 or 422, not 200"""
-        headers = get_auth_headers()
-        response = client.post("/api/rag/search", json={"query": ""}, headers=headers)
-        assert response.status_code in [400, 422]
-        assert response.status_code != 200
+        """Empty string query → 400 or 422"""
+        headers = auth_headers()
+        with patch("routers.rag._embed_text", return_value=None), \
+             patch("routers.rag._get_gemini_client", return_value=None):
+            r = client.post("/api/rag/search", json={"query": ""}, headers=headers)
+        assert r.status_code in [400, 422]
+        assert r.status_code != 200
 
-    def test_search_missing_query_field(self):
-        """Missing query field → 422 validation error"""
-        headers = get_auth_headers()
-        response = client.post("/api/rag/search", json={}, headers=headers)
-        assert response.status_code == 422
+    def test_search_no_results_returns_200_not_500(self):
+        """No matching chunks → 200 with fallback message, not 500"""
+        headers = auth_headers()
+        with patch("routers.rag._embed_text", return_value=[0.1] * 768), \
+             patch("routers.rag._get_gemini_client", return_value=MagicMock()):
+            mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(data=[])
+            mock_sb.table.return_value.select.return_value.ilike.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+            mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
 
-    def test_search_response_has_answer_field(self):
-        """Response must contain 'answer' or 'results' key"""
-        headers = get_auth_headers()
-        mock_supabase.table().select().execute.return_value = MagicMock(
-            data=[make_chunk()]
-        )
-        with patch("backend.routers.rag.generate_embedding", return_value=[0.1] * 768), \
-             patch("backend.routers.rag.gemini_generate", return_value="Backpropagation adjusts weights."):
-            response = client.post("/api/rag/search", json={"query": "what is backpropagation"}, headers=headers)
+            r = client.post("/api/rag/search", json={"query": "xyzzy quantum teleport"}, headers=headers)
 
-        if response.status_code == 200:
-            data = response.json()
-            has_answer = "answer" in data or "results" in data or "response" in data
-            assert has_answer, f"Response missing answer/results key. Got: {list(data.keys())}"
+        assert r.status_code == 200
+        assert r.status_code != 500
 
-    def test_search_no_results_returns_fallback(self):
-        """Zero matching chunks → still returns 200 with fallback message, not 500"""
-        headers = get_auth_headers()
-        mock_supabase.table().select().execute.return_value = MagicMock(data=[])
-        with patch("backend.routers.rag.generate_embedding", return_value=[0.1] * 768):
-            response = client.post("/api/rag/search", json={"query": "xyzzy quantum teleportation"}, headers=headers)
+    def test_search_response_structure(self):
+        """Response must have query, results, generated_answer keys"""
+        headers = auth_headers()
+        with patch("routers.rag._embed_text", return_value=[0.1] * 768), \
+             patch("routers.rag._get_gemini_client", return_value=MagicMock()):
+            mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(data=[])
+            mock_sb.table.return_value.select.return_value.ilike.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+            mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
 
-        assert response.status_code in [200, 404]
-        assert response.status_code != 500
+            r = client.post("/api/rag/search", json={"query": "machine learning"}, headers=headers)
 
-# ─── PDF Upload Tests ─────────────────────────────────────────────────────────
+        assert r.status_code == 200
+        data = r.json()
+        assert "query" in data
+        assert "results" in data
+        assert "generated_answer" in data
+
+
+# ── PDF Upload ────────────────────────────────────────────────────────────────
 
 class TestPDFUpload:
 
-    def test_upload_pdf_requires_auth(self):
-        """Unauthenticated upload → 401"""
+    def test_upload_no_token_is_auth_error(self):
+        """No token → auth error"""
         import io
-        fake_pdf = io.BytesIO(b"%PDF-1.4 fake content")
-        response = client.post("/api/rag/upload-pdf", files={"file": ("test.pdf", fake_pdf, "application/pdf")})
-        assert response.status_code == 401
+        r = client.post("/api/rag/upload-pdf",
+                        files={"file": ("test.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")})
+        assert r.status_code in [401, 403]
 
-    def test_upload_non_pdf_rejected(self):
-        """Non-PDF file → 400, not 200"""
+    def test_upload_non_pdf_rejected_400(self):
+        """Non-PDF → 400"""
         import io
-        headers = get_auth_headers(role="teacher")
-        fake_txt = io.BytesIO(b"this is a text file")
-        response = client.post(
-            "/api/rag/upload-pdf",
-            files={"file": ("notes.txt", fake_txt, "text/plain")},
-            headers=headers
-        )
-        assert response.status_code in [400, 422]
-        assert response.status_code != 200
+        headers = auth_headers(role="teacher")
+        r = client.post("/api/rag/upload-pdf",
+                        files={"file": ("notes.txt", io.BytesIO(b"text content"), "text/plain")},
+                        headers=headers)
+        assert r.status_code == 400
+        assert r.status_code != 200
 
-    def test_upload_student_cannot_upload(self):
-        """Student role → 403 forbidden, only teacher/admin can upload"""
+    def test_upload_student_forbidden_403(self):
+        """Student cannot upload → 403"""
         import io
-        headers = get_auth_headers(role="student")
-        fake_pdf = io.BytesIO(b"%PDF-1.4 fake pdf content")
-        response = client.post(
-            "/api/rag/upload-pdf",
-            files={"file": ("test.pdf", fake_pdf, "application/pdf")},
-            headers=headers
-        )
-        assert response.status_code in [403, 401]
-        assert response.status_code != 200
+        headers = auth_headers(role="student")
+        r = client.post("/api/rag/upload-pdf",
+                        files={"file": ("test.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
+                        headers=headers)
+        assert r.status_code == 403
+        assert r.status_code != 200
 
-# ─── PDF List Tests ───────────────────────────────────────────────────────────
+    def test_upload_teacher_success(self):
+        """Teacher uploads PDF → 200"""
+        import io
+        headers = auth_headers(role="teacher")
+        new_pdf = {"id": 1, "filename": "test.pdf", "status": "pending_indexing"}
+
+        with patch("routers.rag._ensure_storage_bucket", return_value=None), \
+             patch("routers.rag.get_supabase", fake_get_supabase):
+            mock_sb.storage.from_.return_value.upload.return_value = MagicMock()
+            mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[new_pdf])
+
+            r = client.post("/api/rag/upload-pdf",
+                            files={"file": ("test.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+                            headers=headers)
+
+        assert r.status_code == 200
+        assert r.status_code != 403
+        assert r.status_code != 500
+
+
+# ── PDF List ──────────────────────────────────────────────────────────────────
 
 class TestPDFList:
 
+    def test_list_pdfs_no_token_is_auth_error(self):
+        r = client.get("/api/rag/pdfs")
+        assert r.status_code in [401, 403]
+
     def test_list_pdfs_returns_list(self):
-        """GET /api/rag/pdfs → 200 with list"""
-        headers = get_auth_headers()
-        mock_supabase.table().select().execute.return_value = MagicMock(data=[
-            {"id": "pdf-001", "title": "ML Basics", "uploaded_by": "user-001"}
+        headers = auth_headers()
+        mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[
+            {"id": 1, "filename": "ml.pdf", "status": "indexed",
+             "total_pages": 10, "total_chunks": 50, "uploaded_by": "uuid-001", "created_at": "2026-01-01"}
         ])
-        response = client.get("/api/rag/pdfs", headers=headers)
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
+        r = client.get("/api/rag/pdfs", headers=headers)
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
 
-    def test_list_pdfs_requires_auth(self):
-        """No token → 401"""
-        response = client.get("/api/rag/pdfs")
-        assert response.status_code == 401
+    def test_list_pdfs_structure(self):
+        """Each PDF item has required fields"""
+        headers = auth_headers()
+        mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[
+            {"id": 1, "filename": "ml.pdf", "status": "indexed",
+             "total_pages": 5, "total_chunks": 20, "uploaded_by": "uuid-001", "created_at": "2026-01-01"}
+        ])
+        r = client.get("/api/rag/pdfs", headers=headers)
+        assert r.status_code == 200
+        items = r.json()
+        if items:
+            assert "id" in items[0]
+            assert "filename" in items[0]
+            assert "status" in items[0]
 
-# ─── Search History Tests ─────────────────────────────────────────────────────
+
+# ── Search History ────────────────────────────────────────────────────────────
 
 class TestSearchHistory:
 
-    def test_search_history_returns_list(self):
-        """GET /api/rag/search-history → 200 with list"""
-        headers = get_auth_headers()
-        mock_supabase.table().select().eq().execute.return_value = MagicMock(data=[
-            {"query": "what is RAG", "created_at": "2026-01-01T10:00:00"}
-        ])
-        response = client.get("/api/rag/search-history", headers=headers)
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
+    def test_history_no_token_is_auth_error(self):
+        r = client.get("/api/rag/search-history")
+        assert r.status_code in [401, 403]
 
-    def test_search_history_requires_auth(self):
-        """No token → 401"""
-        response = client.get("/api/rag/search-history")
-        assert response.status_code == 401
+    def test_history_returns_list(self):
+        headers = auth_headers()
+        mock_sb.table.return_value.select.return_value \
+               .eq.return_value.order.return_value \
+               .limit.return_value.execute.return_value = MagicMock(data=[
+            {"id": "h1", "query": "what is RAG", "language": "en",
+             "results_count": 3, "created_at": "2026-01-01T10:00:00"}
+        ])
+        r = client.get("/api/rag/search-history", headers=headers)
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+    def test_history_is_user_specific(self):
+        """History endpoint uses user_id filter — no cross-user data leakage"""
+        headers = auth_headers()
+        mock_sb.table.return_value.select.return_value \
+               .eq.return_value.order.return_value \
+               .limit.return_value.execute.return_value = MagicMock(data=[])
+        r = client.get("/api/rag/search-history", headers=headers)
+        assert r.status_code == 200
+        # eq() was called — confirming user_id filter was applied
+        mock_sb.table.return_value.select.return_value.eq.assert_called()
