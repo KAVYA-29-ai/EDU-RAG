@@ -10,14 +10,36 @@ def _fake_db(): return _mock_sb
 class _Noop(BaseHTTPMiddleware):
     async def dispatch(self, req, call_next): return await call_next(req)
 
+# Force remove cached main module so we get a fresh app with our patches
+import importlib
+for mod in list(sys.modules.keys()):
+    if mod in ("main", "database") or mod.startswith("routers"):
+        del sys.modules[mod]
+
 patch("database.init_supabase", lambda: None).start()
 patch("database.get_supabase", _fake_db).start()
 patch("database.supabase_admin", _mock_sb).start()
 patch("database.supabase", _mock_sb).start()
-patch("main.RateLimitMiddleware", _Noop).start()
 
+# Import main fresh — then patch middleware on the app directly
+import main as _main_mod
+_main_mod.RateLimitMiddleware = _Noop
+
+# Rebuild app without rate limiter by importing fresh
+for mod in list(sys.modules.keys()):
+    if mod == "main":
+        del sys.modules[mod]
+
+patch("main.RateLimitMiddleware", _Noop).start()
 from main import app  # noqa
 from fastapi.testclient import TestClient
+
+# Remove rate limit middleware from app's middleware stack if already added
+app.middleware_stack = None  # force rebuild on next request
+# Patch the middleware class reference directly
+import main as _m
+_m.RateLimitMiddleware = _Noop
+
 _client = TestClient(app, raise_server_exceptions=False)
 
 from passlib.context import CryptContext
@@ -54,7 +76,14 @@ def _reset():
     _mock_sb.reset_mock()
     _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
+    # Reset rate limiter bucket so tests never hit 429
+    try:
+        import main as _m
+        _m._ip_buckets.clear()
+    except Exception:
+        pass
     yield
+
 
 class TestRAGSearch:
     def test_no_token_auth_error(self):
@@ -110,6 +139,7 @@ class TestRAGSearch:
         for k in ["query", "results", "generated_answer"]:
             assert k in r.json()
 
+
 class TestPDFUpload:
     def test_no_token_auth_error(self):
         r = _client.post("/api/rag/upload-pdf", files={"file": ("t.pdf", io.BytesIO(b"%PDF"), "application/pdf")})
@@ -141,6 +171,7 @@ class TestPDFUpload:
                              headers=_auth("teacher"))
         assert r.status_code == 200
 
+
 class TestPDFList:
     def test_no_token_auth_error(self):
         r = _client.get("/api/rag/pdfs")
@@ -167,12 +198,11 @@ class TestPDFList:
         if r.json():
             assert "id" in r.json()[0] and "filename" in r.json()[0]
 
+
 class TestSearchHistory:
     def _setup(self, data):
         u = _user("student")
-        # user fetch: .select().eq().limit().execute()
         _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[u])
-        # history fetch: .select().eq().order().limit().execute()
         _mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=data)
 
     def test_no_token_auth_error(self):
