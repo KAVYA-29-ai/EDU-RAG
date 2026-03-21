@@ -9,20 +9,18 @@ from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timedelta
 
 from database import get_supabase
-from routers.auth import get_current_user
+from core.rbac import require_roles
 
 router = APIRouter()
 
 
 @router.get("/summary")
-async def get_system_summary(current_user: dict = Depends(get_current_user)):
+async def get_system_summary(current_user: dict = Depends(require_roles("admin"))):
     """
     Get a summary of system analytics including users, searches, PDFs, and feedback.
     Only admins can view analytics.
     Returns a summary dictionary.
     """
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can view analytics")
     try:
         sb = get_supabase()
         users = sb.table("users").select("id").execute().data or []
@@ -52,13 +50,11 @@ async def get_system_summary(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/usage-by-role")
-async def get_usage_by_role(current_user: dict = Depends(get_current_user)):
+async def get_usage_by_role(current_user: dict = Depends(require_roles("admin"))):
     """
     Get usage analytics grouped by user role. Only admins can view analytics.
     Returns a list of usage counts by role.
     """
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can view analytics")
     try:
         sb = get_supabase()
         sh = sb.table("search_history").select("user_id").execute().data or []
@@ -80,9 +76,7 @@ async def get_usage_by_role(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/language-usage")
-async def get_language_usage(current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can view analytics")
+async def get_language_usage(current_user: dict = Depends(require_roles("admin"))):
     try:
         sb = get_supabase()
         rows = sb.table("search_history").select("language").execute().data or []
@@ -94,9 +88,7 @@ async def get_language_usage(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/daily-queries")
-async def get_daily_queries(days: int = 30, current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can view analytics")
+async def get_daily_queries(days: int = 30, current_user: dict = Depends(require_roles("admin"))):
     try:
         sb = get_supabase()
         start = (datetime.utcnow() - timedelta(days=days)).isoformat()
@@ -109,9 +101,7 @@ async def get_daily_queries(days: int = 30, current_user: dict = Depends(get_cur
 
 
 @router.get("/student-insights")
-async def get_student_insights(current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") not in ["admin", "teacher"]:
-        raise HTTPException(status_code=403, detail="Only teachers and admins can view insights")
+async def get_student_insights(current_user: dict = Depends(require_roles("admin", "teacher"))):
     try:
         sb = get_supabase()
         students = sb.table("users").select("id, name, institution_id").eq("role", "student").execute().data or []
@@ -138,12 +128,15 @@ async def get_student_insights(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/top-topics")
-async def get_top_topics(limit: int = 10, current_user: dict = Depends(get_current_user)):
+async def get_top_topics(limit: int = 10, current_user: dict = Depends(require_roles("admin", "teacher"))):
     try:
         sb = get_supabase()
         rows = sb.table("search_history").select("query").execute().data or []
         from collections import Counter
         counts = Counter(r["query"] for r in rows if r.get("query"))
+        return [{"topic": q, "count": c, "trend": "stable"} for q, c in counts.most_common(limit)]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
         return [{"topic": q, "count": c, "trend": "stable"} for q, c in counts.most_common(limit)]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
