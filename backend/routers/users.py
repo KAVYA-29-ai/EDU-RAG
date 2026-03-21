@@ -11,6 +11,7 @@ from typing import Optional
 from models import UserUpdate
 from database import get_supabase
 from routers.auth import get_current_user
+from core.rbac import require_roles, require_self_or_roles
 
 router = APIRouter()
 
@@ -23,10 +24,8 @@ router = APIRouter()
 async def get_all_users(
     role: Optional[str] = None,
     status: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles("admin", "teacher")),
 ):
-    if current_user.get("role") not in ["admin", "teacher"]:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     try:
         sb = get_supabase()
         q = sb.table("users").select("id, name, institution_id, email, role, avatar, status, created_at")
@@ -41,7 +40,7 @@ async def get_all_users(
 
 
 @router.get("/students")
-async def get_students(current_user: dict = Depends(get_current_user)):
+async def get_students(current_user: dict = Depends(require_roles("admin", "teacher", "student"))):
     try:
         sb = get_supabase()
         resp = sb.table("users").select("id, name, institution_id, email, avatar, status").eq("role", "student").execute()
@@ -51,7 +50,7 @@ async def get_students(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/teachers")
-async def get_teachers(current_user: dict = Depends(get_current_user)):
+async def get_teachers(current_user: dict = Depends(require_roles("admin", "teacher", "student"))):
     try:
         sb = get_supabase()
         resp = sb.table("users").select("id, name, institution_id, email, avatar, status").eq("role", "teacher").execute()
@@ -65,9 +64,7 @@ async def get_teachers(current_user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @router.get("/stats")
-async def get_user_stats(current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can view stats")
+async def get_user_stats(current_user: dict = Depends(require_roles("admin"))):
     try:
         sb = get_supabase()
         all_users = sb.table("users").select("id, role, status").execute().data or []
@@ -102,7 +99,7 @@ async def get_current_user_profile(current_user: dict = Depends(get_current_user
 # ---------------------------------------------------------------------------
 
 @router.get("/{user_id}")
-async def get_user(user_id: int, current_user: dict = Depends(get_current_user)):
+async def get_user(user_id: int, current_user: dict = Depends(require_roles("admin", "teacher", "student"))):
     try:
         sb = get_supabase()
         resp = sb.table("users").select("id, name, institution_id, email, role, avatar, status, created_at").eq("id", user_id).limit(1).execute()
@@ -121,10 +118,8 @@ async def get_user(user_id: int, current_user: dict = Depends(get_current_user))
 
 @router.patch("/{user_id}")
 async def update_user(user_id: int, user_update: UserUpdate, current_user: dict = Depends(get_current_user)):
+    require_self_or_roles("admin")(current_user, user_id)
     is_admin = current_user.get("role") == "admin"
-    is_own = current_user.get("id") == user_id
-    if not is_admin and not is_own:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
     if user_update.role and not is_admin:
         raise HTTPException(status_code=403, detail="Only admins can change roles")
     try:
@@ -143,9 +138,7 @@ async def update_user(user_id: int, user_update: UserUpdate, current_user: dict 
 
 
 @router.patch("/{user_id}/role")
-async def change_user_role(user_id: int, role_data: dict, current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can change roles")
+async def change_user_role(user_id: int, role_data: dict, current_user: dict = Depends(require_roles("admin"))):
     new_role = role_data.get("role")
     if new_role not in ["student", "teacher", "admin"]:
         raise HTTPException(status_code=400, detail="Invalid role")
@@ -167,9 +160,7 @@ async def change_user_role(user_id: int, role_data: dict, current_user: dict = D
 # ---------------------------------------------------------------------------
 
 @router.delete("/{user_id}")
-async def delete_user(user_id: int, current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can delete users")
+async def delete_user(user_id: int, current_user: dict = Depends(require_roles("admin"))):
     if current_user.get("id") == user_id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
     try:
