@@ -5,15 +5,15 @@ Authentication Router for MINI-RAG Backend
 Handles user registration, login, JWT token management, and authentication-related endpoints.
 All user data is stored in Supabase.
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 from dotenv import load_dotenv
 
-from models import UserRegister, UserLogin, Token, UserRole
+from models import UserRegister, UserLogin, Token
 from database import get_supabase
 
 load_dotenv()
@@ -22,9 +22,14 @@ router = APIRouter()
 security = HTTPBearer()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key")
+JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+EMAIL_VERIFICATION_REQUIRED = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() in {"1", "true", "yes"}
+EMAIL_VERIFICATION_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFICATION_EXPIRE_HOURS", "24"))
+
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET is required. Set it in your environment or .env file.")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -49,7 +54,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     Returns the encoded JWT token as a string.
     """
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -100,6 +105,18 @@ async def require_role(allowed_roles: list):
     return check_role
 
 
+def create_email_verification_token(user_id: int, email: str) -> str:
+    """Create a short-lived token used by the email verification endpoint."""
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_EXPIRE_HOURS)
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "token_type": "email_verification",
+        "exp": expires_at,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
 @router.post("/register", response_model=Token)
 async def register(user_data: UserRegister):
     """
@@ -113,6 +130,7 @@ async def register(user_data: UserRegister):
             raise HTTPException(status_code=400, detail="User with this Institution ID already exists")
 
         hashed_password = get_password_hash(user_data.password)
+        initial_status = "pending_verification" if (EMAIL_VERIFICATION_REQUIRED and user_data.email) else "active"
         row = {
             "name": user_data.name,
             "institution_id": user_data.institution_id,
@@ -120,10 +138,32 @@ async def register(user_data: UserRegister):
             "password_hash": hashed_password,
             "role": user_data.role.value,
             "avatar": user_data.avatar,
-            "status": "active",
+            "status": initial_status,
         }
         resp = sb.table("users").insert(row).execute()
         new_user = resp.data[0]
+
+        if EMAIL_VERIFICATION_REQUIRED and (new_user.get("email") or ""):
+            verification_token = create_email_verification_token(new_user["id"], new_user.get("email") or "")
+            return Token(
+                access_token="",
+                token_type="bearer",
+                user={
+                    "id": new_user["id"],
+                    "name": new_user["name"],
+                    "institution_id": new_user["institution_id"],
+                    "email": new_user.get("email") or "",
+                    "role": new_user["role"],
+                    "avatar": new_user.get("avatar", "male"),
+                    "status": new_user.get("status", "pending_verification"),
+                },
+                requires_verification=True,
+                message=(
+                    "Email verification required. Open /api/auth/verify-email?token="
+                    f"{verification_token}"
+                ),
+            )
+
         access_token = create_access_token({
             "user_id": new_user["id"],
             "institution_id": new_user["institution_id"],
@@ -159,6 +199,8 @@ async def login(user_data: UserLogin):
         user = resp.data[0] if resp.data else None
         if not user:
             raise HTTPException(status_code=401, detail="Invalid credentials")
+        if user.get("status") == "pending_verification":
+            raise HTTPException(status_code=403, detail="Please verify your email before login")
         if not verify_password(user_data.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid credentials")
         access_token = create_access_token({
@@ -191,6 +233,30 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/logout")
+async def logout():
+    """Logout endpoint — stateless, for client-side token removal."""
+    return {"message": "Logged out successfully"}
+
+
+@router.get("/verify-email")
+async def verify_email(token: str = Query(..., min_length=1)):
+    """Verify a user's email using a signed verification token."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("token_type") != "email_verification":
+            raise HTTPException(status_code=400, detail="Invalid verification token")
+
+        user_id = payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Invalid verification token")
+
+        sb = get_supabase()
+        resp = sb.table("users").update({"status": "active"}).eq("id", user_id).execute()
+        if not resp.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {"message": "Email verified successfully. You can now login."}
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
 async def logout():
     """Logout endpoint — stateless, for client-side token removal."""
     return {"message": "Logged out successfully"}
