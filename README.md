@@ -1,4 +1,4 @@
-# 🎓 Docu Rag - AI-Powered Educational RAG Platform
+# 🎓 EduRag - AI-Powered Educational RAG Platform 
 
 <p align="center">
   <strong>Retrieval Augmented Generation (RAG) platform for modern education — powered by Gemini AI & Supabase</strong>
@@ -53,6 +53,8 @@ See the [docs/SETUP.md](docs/SETUP.md) for local setup and [docs/API.md](docs/AP
 
 ### 🎓 For Students
 - **RAG Search** — ask questions in natural language, get AI-generated answers with source citations
+- **Adaptive Study Plan** — generate a 7-day AI-guided study schedule for a topic
+- **Smart Recommendations** — personalized topic suggestions based on search behavior
 - **PDF Upload** — upload and organize study materials
 - **Peer Discovery** — view and connect with classmates (Buddies)
 - **Anonymous Feedback** — share thoughts with teachers anonymously
@@ -60,6 +62,7 @@ See the [docs/SETUP.md](docs/SETUP.md) for local setup and [docs/API.md](docs/AP
 
 ### 👨‍🏫 For Teachers
 - **Content Upload & Indexing** — upload PDFs and index them for RAG search
+- **AI Document Summary** — produce concise revision summaries from indexed materials
 - **Student Analysis** — monitor trending topics students are searching for
 - **Feedback Dashboard** — receive and respond to student feedback
 - **Analytics Overview** — class engagement and performance metrics
@@ -103,6 +106,84 @@ See the [docs/SETUP.md](docs/SETUP.md) for local setup and [docs/API.md](docs/AP
                             │  Generation        │
                             └───────────────────┘
 ```
+
+      ```mermaid
+      flowchart LR
+         U[User Browser] --> FE[React Frontend]
+         FE --> API[FastAPI Backend]
+         API --> AUTH[JWT Auth + RBAC]
+         API --> DB[(Supabase Postgres)]
+         API --> ST[(Supabase Storage)]
+         API --> AI[Gemini Models]
+         DB --> A[Analytics]
+         ST --> R[RAG Indexing]
+         R --> DB
+      ```
+
+### Layered Backend Design (Updated)
+
+The backend now follows a clearer layered approach:
+
+- `routers/` handles HTTP transport and request/response mapping.
+- `core/` contains cross-cutting framework concerns (RBAC dependencies).
+- `services/` contains reusable business logic (chat operations, websocket manager).
+- `models.py` contains schema validation contracts.
+- `database.py` handles Supabase connectivity.
+
+```mermaid
+flowchart TB
+   Client[React Client] --> Router[FastAPI Routers]
+   Router --> Core[Core Layer: RBAC Dependencies]
+   Router --> Service[Service Layer: Chat + Realtime]
+   Router --> Model[Models Layer: Pydantic Schemas]
+   Service --> DB[(Supabase)]
+   Router --> DB
+```
+
+### RBAC Authorization Flow
+
+```mermaid
+flowchart LR
+   Req[Incoming Request] --> JWT[Decode JWT]
+   JWT --> Role[Extract User Role]
+   Role --> Guard{Role Allowed?}
+   Guard -->|Yes| Handler[Run Route Handler]
+   Guard -->|No| Forbidden[HTTP 403]
+```
+
+### Realtime Collaboration (WebSocket)
+
+```mermaid
+sequenceDiagram
+   participant C as Client
+   participant WS as /api/ws/chat
+   participant M as ConnectionManager
+
+   C->>WS: Connect with token query param
+   WS->>WS: Validate JWT token
+   WS->>M: Register connection
+   C->>WS: Send chat/update payload
+   WS->>M: Broadcast payload
+   M-->>C: Push update to subscribers
+```
+
+      ```mermaid
+      sequenceDiagram
+         participant User
+         participant FE as React App
+         participant BE as FastAPI
+         participant SB as Supabase
+         participant GM as Gemini
+
+         User->>FE: Ask question
+         FE->>BE: POST /api/rag/search
+         BE->>GM: Embed query
+         BE->>SB: Fetch embeddings + chunks
+         BE->>GM: Generate answer with context
+         BE->>SB: Log search history
+         BE-->>FE: Answer + sources
+         FE-->>User: Render response and citations
+      ```
 
 ### Data Flow
 1. **Authentication** → Custom JWT (bcrypt + python-jose) → Role-based access (student/teacher/admin)
@@ -183,6 +264,11 @@ MINIRAG2/
 │   ├── main.py                 # FastAPI app + CORS + SPA serving
 │   ├── database.py             # Supabase client initialization
 │   ├── models.py               # Pydantic request/response models
+│   ├── core/
+│   │   └── rbac.py             # Reusable role-based access dependencies
+│   ├── services/
+│   │   ├── chat_service.py     # Chat business logic
+│   │   └── realtime.py         # WebSocket connection manager
 │   ├── supabase_schema.sql     # All 8 tables + RLS + storage bucket
 │   ├── requirements.txt        # Python dependencies
 │   ├── .env.example            # Environment variable template
@@ -233,6 +319,12 @@ Storage: Private `pdfs` bucket in Supabase Storage.
 
 ## 📡 API Endpoints
 
+FastAPI auto-generated docs are available at:
+- Swagger UI: `/docs` (interactive API testing)
+- ReDoc: `/redoc` (human-readable reference)
+
+Use these docs after deployment to verify every endpoint and schema contract.
+
 ### Auth
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -246,11 +338,13 @@ Storage: Private `pdfs` bucket in Supabase Storage.
 |--------|----------|-------------|
 | POST | `/api/rag/search` | Semantic RAG search with AI answer |
 | POST | `/api/rag/upload-pdf` | Upload PDF (teacher/admin) |
-| POST | `/api/rag/index-pdf/{id}` | Index PDF for search (teacher/admin) |
+| POST | `/api/rag/pdfs/{id}/index` | Index PDF for search (teacher/admin) |
 | GET | `/api/rag/pdfs` | List all PDFs |
 | DELETE | `/api/rag/pdfs/{id}` | Delete PDF (teacher/admin) |
+| GET | `/api/rag/pdfs/{id}/summary` | AI study summary for indexed PDF |
 | GET | `/api/rag/search-history` | User's search history |
 | GET | `/api/rag/trending` | Trending search topics |
+| GET | `/api/rag/recommendations` | Personalized topic recommendations |
 
 ### Users
 | Method | Endpoint | Description |
@@ -280,6 +374,9 @@ Storage: Private `pdfs` bucket in Supabase Storage.
 - [x] PDF indexing — text extraction → chunking → Gemini embedding → store vectors
 - [x] RAG semantic search with cosine similarity (threshold ≥ 0.65)
 - [x] AI-generated answers using Gemini with source citations
+- [x] Language-aware answer generation (English, Hindi, Hinglish)
+- [x] AI study summaries for indexed PDFs
+- [x] Personalized topic recommendations from search behavior
 - [x] Keyword fallback search when semantic search has no results
 - [x] Search history tracking
 - [x] Trending topics analytics
@@ -318,9 +415,18 @@ JWT_SECRET=your-secret-key
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 GEMINI_API_KEY=your-gemini-api-key
+REQUIRE_EMAIL_VERIFICATION=false
+EMAIL_VERIFICATION_EXPIRE_HOURS=24
 ```
 
 ⚠️ **Never commit `.env` files to version control**
+
+---
+
+## 🤝 Project Maturity
+
+- Contribution Guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Release Notes: [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -355,5 +461,4 @@ https://github.com/KAVYA-29-ai/MINIRAG2
 [Report Bug](https://github.com/KAVYA-29-ai/MINIRAG2/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINIRAG2/issues)
 
 </div>
-Testing CodeRabbit integration 🚀
 
