@@ -1,6 +1,4 @@
-
-
-# 🎓 EduRag - AI-Powered Educational RAG Platform
+# 🎓 Docu Rag - AI-Powered Educational RAG Platform
 
 <p align="center">
   <strong>Retrieval Augmented Generation (RAG) platform for modern education — powered by Gemini AI & Supabase</strong>
@@ -358,3 +356,4 @@ https://github.com/KAVYA-29-ai/MINIRAG2
 
 </div>
 Testing CodeRabbit integration 🚀
+
