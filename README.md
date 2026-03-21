@@ -1,4 +1,4 @@
-# 🎓 EduRag - AI-Powered Educational RAG Platform 
+# 🎓 EduRag - AI-Powered Educational RAG Platform
 
 <p align="center">
   <strong>Retrieval Augmented Generation (RAG) platform for modern education — powered by Gemini AI & Supabase</strong>
@@ -461,4 +461,3 @@ https://github.com/KAVYA-29-ai/MINIRAG2
 [Report Bug](https://github.com/KAVYA-29-ai/MINIRAG2/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINIRAG2/issues)
 
 </div>
-

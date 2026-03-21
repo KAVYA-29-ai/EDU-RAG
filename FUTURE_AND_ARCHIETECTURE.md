@@ -420,4 +420,3 @@ Use Gemini to auto-generate quizzes from uploaded PDFs:
 - New tables: `quizzes`, `quiz_questions`, `quiz_attempts`
 
 ---
-
