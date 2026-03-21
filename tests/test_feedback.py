@@ -21,6 +21,14 @@ from main import app  # noqa
 import main as _m
 _m._ip_buckets = defaultdict(lambda: deque())
 
+# Patch get_supabase in each router module directly (they import it at load time)
+import routers.auth as _r_auth
+import routers.feedback as _r_fb
+import routers.student_feedback as _r_sfb
+_r_auth.get_supabase = _fake_db
+_r_fb.get_supabase = _fake_db
+_r_sfb.get_supabase = _fake_db
+
 from fastapi.testclient import TestClient
 _client = TestClient(app, raise_server_exceptions=False)
 
@@ -80,15 +88,13 @@ class TestSubmitFeedback:
     def test_teacher_200(self):
         _set_user("teacher")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
-        with patch("routers.feedback.get_supabase", _fake_db):
-            r = _client.post("/api/feedback/", json={"category": CAT, "message": "Good"}, headers=_auth("teacher"))
+        r = _client.post("/api/feedback/", json={"category": CAT, "message": "Good"}, headers=_auth("teacher"))
         assert r.status_code == 200
 
     def test_teacher_response_has_key(self):
         _set_user("teacher")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
-        with patch("routers.feedback.get_supabase", _fake_db):
-            r = _client.post("/api/feedback/", json={"category": CAT, "message": "Good"}, headers=_auth("teacher"))
+        r = _client.post("/api/feedback/", json={"category": CAT, "message": "Good"}, headers=_auth("teacher"))
         assert r.status_code == 200
         assert "message" in r.json() or "feedback" in r.json()
 
@@ -115,8 +121,7 @@ class TestSubmitFeedback:
     def test_never_500(self):
         _set_user("teacher")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
-        with patch("routers.feedback.get_supabase", _fake_db):
-            r = _client.post("/api/feedback/", json={"category": CAT, "message": "Fine"}, headers=_auth("teacher"))
+        r = _client.post("/api/feedback/", json={"category": CAT, "message": "Fine"}, headers=_auth("teacher"))
         assert r.status_code != 500
 
 
@@ -131,8 +136,7 @@ class TestGetFeedback:
     def test_admin_200(self):
         _set_user("admin")
         _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[_fb()])
-        with patch("routers.feedback.get_supabase", _fake_db):
-            r = _client.get("/api/feedback/", headers=_auth("admin"))
+        r = _client.get("/api/feedback/", headers=_auth("admin"))
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
@@ -149,16 +153,14 @@ class TestGetFeedback:
     def test_item_has_fields(self):
         _set_user("admin")
         _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[_fb()])
-        with patch("routers.feedback.get_supabase", _fake_db):
-            r = _client.get("/api/feedback/", headers=_auth("admin"))
+        r = _client.get("/api/feedback/", headers=_auth("admin"))
         if r.status_code == 200 and r.json():
             assert "id" in r.json()[0]
 
     def test_never_500(self):
         _set_user("admin")
         _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[])
-        with patch("routers.feedback.get_supabase", _fake_db):
-            r = _client.get("/api/feedback/", headers=_auth("admin"))
+        r = _client.get("/api/feedback/", headers=_auth("admin"))
         assert r.status_code != 500
 
 
@@ -169,8 +171,7 @@ class TestMyFeedback:
     def test_teacher_gets_list(self):
         _set_user("teacher")
         _mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(data=[_fb()])
-        with patch("routers.feedback.get_supabase", _fake_db):
-            r = _client.get("/api/feedback/mine", headers=_auth("teacher"))
+        r = _client.get("/api/feedback/mine", headers=_auth("teacher"))
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
@@ -182,8 +183,7 @@ class TestMyFeedback:
         """Verify the endpoint filters by sender — returns 200 (not checking eq internals)"""
         _set_user("teacher")
         _mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(data=[])
-        with patch("routers.feedback.get_supabase", _fake_db):
-            r = _client.get("/api/feedback/mine", headers=_auth("teacher"))
+        r = _client.get("/api/feedback/mine", headers=_auth("teacher"))
         assert r.status_code == 200
 
 
@@ -194,8 +194,7 @@ class TestStudentFeedback:
     def test_student_post_200(self):
         _set_user("student")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{"id": "s1", "message": "Good"}])
-        with patch("routers.student_feedback.get_supabase", _fake_db):
-            r = _client.post("/api/student-feedback",
+        r = _client.post("/api/student-feedback",
                              json={"message": "Good", "is_anonymous": True},
                              headers=_auth("student"))
         assert r.status_code == 200
@@ -210,16 +209,14 @@ class TestStudentFeedback:
         _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(
             data=[{"id": "s1", "message": "Good", "is_anonymous": True}]
         )
-        with patch("routers.student_feedback.get_supabase", _fake_db):
-            r = _client.get("/api/student-feedback", headers=_auth("admin"))
+        r = _client.get("/api/student-feedback", headers=_auth("admin"))
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
     def test_teacher_can_view_200(self):
         _set_user("teacher")
         _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[])
-        with patch("routers.student_feedback.get_supabase", _fake_db):
-            r = _client.get("/api/student-feedback", headers=_auth("teacher"))
+        r = _client.get("/api/student-feedback", headers=_auth("teacher"))
         assert r.status_code == 200
 
     def test_student_cannot_view(self):
@@ -230,7 +227,6 @@ class TestStudentFeedback:
     def test_no_password_in_response(self):
         _set_user("student")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{"id": "s2", "message": "Anon"}])
-        with patch("routers.student_feedback.get_supabase", _fake_db):
-            r = _client.post("/api/student-feedback", json={"message": "Anon"}, headers=_auth("student"))
+        r = _client.post("/api/student-feedback", json={"message": "Anon"}, headers=_auth("student"))
         if r.status_code == 200:
             assert "password" not in str(r.json())
