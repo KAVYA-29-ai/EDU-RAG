@@ -1,5 +1,5 @@
 import os, sys, pathlib, pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 from starlette.middleware.base import BaseHTTPMiddleware
 from collections import defaultdict, deque
 
@@ -37,10 +37,6 @@ def _user(role="teacher"):
             "role": role, "avatar": "male", "status": "active",
             "password_hash": _pwd.hash("testpass123")}
 
-def _set_user(role="teacher"):
-    """Mock get_current_user DB fetch: select().eq().limit().execute()"""
-    _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[_user(role)])
-
 def _jwt(role="teacher"):
     from jose import jwt as j
     from datetime import datetime, timedelta
@@ -54,6 +50,28 @@ def _auth(role="teacher"):
 def _fb():
     return {"id": "fb-001", "sender_id": "uuid-teacher", "category": "content",
             "message": "Test", "status": "pending", "created_at": "2026-01-01T10:00:00"}
+
+def _setup(role="teacher", mine_data=None, insert_data=None, order_data=None):
+    """
+    Set up ALL mock chains at once to avoid conflicts.
+    - user fetch:     table().select().eq().limit().execute()  -> user
+    - /mine fetch:    table().select().eq().order().execute()  -> mine_data
+    - insert:         table().insert().execute()               -> insert_data
+    - order fetch:    table().select().order().execute()       -> order_data
+    """
+    _mock_sb.reset_mock()
+    _m._ip_buckets.clear()
+    # user fetch chain
+    _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[_user(role)])
+    # /mine chain (eq → order → execute, no limit)
+    if mine_data is not None:
+        _mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(data=mine_data)
+    # insert chain
+    if insert_data is not None:
+        _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=insert_data)
+    # order-only chain (student_feedback GET, feedback GET)
+    if order_data is not None:
+        _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=order_data)
 
 @pytest.fixture(autouse=True)
 def _reset():
@@ -73,41 +91,38 @@ class TestSubmitFeedback:
         assert r.status_code in [401, 403]
 
     def test_teacher_200(self):
-        _set_user("teacher")
-        _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
+        _setup("teacher", insert_data=[_fb()])
         r = _client.post("/api/feedback/", json={"category": CAT, "message": "Good"}, headers=_auth("teacher"))
         assert r.status_code == 200
 
     def test_teacher_response_has_key(self):
-        _set_user("teacher")
-        _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
+        _setup("teacher", insert_data=[_fb()])
         r = _client.post("/api/feedback/", json={"category": CAT, "message": "Good"}, headers=_auth("teacher"))
         assert r.status_code == 200
         assert "message" in r.json() or "feedback" in r.json()
 
     def test_student_blocked_403(self):
-        _set_user("student")
+        _setup("student")
         r = _client.post("/api/feedback/", json={"category": CAT, "message": "Hi"}, headers=_auth("student"))
         assert r.status_code == 403
 
     def test_admin_blocked_403(self):
-        _set_user("admin")
+        _setup("admin")
         r = _client.post("/api/feedback/", json={"category": CAT, "message": "Hi"}, headers=_auth("admin"))
         assert r.status_code == 403
 
     def test_missing_message_422(self):
-        _set_user("teacher")
+        _setup("teacher")
         r = _client.post("/api/feedback/", json={"category": CAT}, headers=_auth("teacher"))
         assert r.status_code == 422
 
     def test_missing_category_422(self):
-        _set_user("teacher")
+        _setup("teacher")
         r = _client.post("/api/feedback/", json={"message": "Good"}, headers=_auth("teacher"))
         assert r.status_code == 422
 
     def test_never_500(self):
-        _set_user("teacher")
-        _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
+        _setup("teacher", insert_data=[_fb()])
         r = _client.post("/api/feedback/", json={"category": CAT, "message": "Fine"}, headers=_auth("teacher"))
         assert r.status_code != 500
 
@@ -121,53 +136,43 @@ class TestGetFeedback:
         assert r.status_code in [401, 403]
 
     def test_admin_200(self):
-        _set_user("admin")
-        # feedback.py GET: .select("*, users!...").order(...).execute()
-        _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[_fb()])
+        # feedback GET: .select("*, users!...").order(...).execute()  — no .eq()
+        _setup("admin", order_data=[_fb()])
         r = _client.get("/api/feedback/", headers=_auth("admin"))
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
     def test_teacher_blocked_403(self):
-        _set_user("teacher")
+        _setup("teacher")
         r = _client.get("/api/feedback/", headers=_auth("teacher"))
         assert r.status_code == 403
 
     def test_student_blocked_403(self):
-        _set_user("student")
+        _setup("student")
         r = _client.get("/api/feedback/", headers=_auth("student"))
         assert r.status_code == 403
 
     def test_item_has_fields(self):
-        _set_user("admin")
-        _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[_fb()])
+        _setup("admin", order_data=[_fb()])
         r = _client.get("/api/feedback/", headers=_auth("admin"))
         if r.status_code == 200 and r.json():
             assert "id" in r.json()[0]
 
     def test_never_500(self):
-        _set_user("admin")
-        _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[])
+        _setup("admin", order_data=[])
         r = _client.get("/api/feedback/", headers=_auth("admin"))
         assert r.status_code != 500
 
 
 # ── My Feedback GET /api/feedback/mine ───────────────────────────────────────
-# feedback.py /mine exact chain:
+# feedback.py /mine:
 #   sb.table("feedback").select("*").eq("sender_id", id).order("created_at", desc=True).execute()
-# get_current_user chain:
-#   sb.table("users").select("*").eq("id", user_id).limit(1).execute()
-# KEY: Both use .eq() but /mine uses .eq().order().execute() (no .limit())
-#      get_current_user uses .eq().limit().execute()
-# So: set BOTH chains — they don't conflict because /mine has .order() before .execute()
+# chain: select().eq().order().execute()  (NO .limit())
 
 class TestMyFeedback:
 
     def test_teacher_gets_list(self):
-        # user fetch: .eq().limit().execute()
-        _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[_user("teacher")])
-        # /mine fetch: .eq().order().execute()
-        _mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(data=[_fb()])
+        _setup("teacher", mine_data=[_fb()])
         r = _client.get("/api/feedback/mine", headers=_auth("teacher"))
         assert r.status_code == 200
         assert isinstance(r.json(), list)
@@ -177,57 +182,51 @@ class TestMyFeedback:
         assert r.status_code in [401, 403]
 
     def test_eq_called_for_filter(self):
-        _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[_user("teacher")])
-        _mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(data=[])
+        _setup("teacher", mine_data=[])
         r = _client.get("/api/feedback/mine", headers=_auth("teacher"))
         assert r.status_code == 200
+        # eq() is called for both user fetch AND /mine sender_id filter
         _mock_sb.table.return_value.select.return_value.eq.assert_called()
 
 
 # ── Student Feedback /api/student-feedback ───────────────────────────────────
-# student_feedback.py GET exact chain:
+# student_feedback.py GET:
 #   sb.table("student_feedback").select("*").order("created_at", desc=True).execute()
-# get_current_user: sb.table("users").select("*").eq("id",...).limit(1).execute()
-# These DON'T conflict — GET has no .eq(), so .select().order().execute() is safe
+# chain: select().order().execute()  (NO .eq())
 
 class TestStudentFeedback:
 
     def test_student_post_200(self):
-        _set_user("student")
-        _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{"id": "s1", "message": "Good"}])
-        r = _client.post("/api/student-feedback", json={"message": "Good", "is_anonymous": True}, headers=_auth("student"))
+        _setup("student", insert_data=[{"id": "s1", "message": "Good"}])
+        r = _client.post("/api/student-feedback",
+                         json={"message": "Good", "is_anonymous": True},
+                         headers=_auth("student"))
         assert r.status_code == 200
 
     def test_admin_post_blocked_403(self):
-        _set_user("admin")
+        _setup("admin")
         r = _client.post("/api/student-feedback", json={"message": "t"}, headers=_auth("admin"))
         assert r.status_code == 403
 
     def test_admin_can_view_200(self):
-        # user fetch: .select().eq().limit().execute()
-        _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[_user("admin")])
-        # student-feedback GET: .select().order().execute()
-        _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(
-            data=[{"id": "s1", "message": "Good", "is_anonymous": True}]
-        )
+        # student-feedback GET: select().order().execute()
+        _setup("admin", order_data=[{"id": "s1", "message": "Good", "is_anonymous": True}])
         r = _client.get("/api/student-feedback", headers=_auth("admin"))
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
     def test_teacher_can_view_200(self):
-        _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[_user("teacher")])
-        _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[])
+        _setup("teacher", order_data=[])
         r = _client.get("/api/student-feedback", headers=_auth("teacher"))
         assert r.status_code == 200
 
     def test_student_cannot_view(self):
-        _set_user("student")
+        _setup("student")
         r = _client.get("/api/student-feedback", headers=_auth("student"))
         assert r.status_code == 403
 
     def test_no_password_in_response(self):
-        _set_user("student")
-        _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{"id": "s2", "message": "Anon"}])
+        _setup("student", insert_data=[{"id": "s2", "message": "Anon"}])
         r = _client.post("/api/student-feedback", json={"message": "Anon"}, headers=_auth("student"))
         if r.status_code == 200:
             assert "password" not in str(r.json())
