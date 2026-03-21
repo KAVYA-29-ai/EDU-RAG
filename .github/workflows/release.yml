@@ -43,4 +43,4 @@ jobs:
             ## Deploy
             Live at https://minirag-2.vercel.app
           draft: false
-          prerelease: false
+          prerelease: fal
