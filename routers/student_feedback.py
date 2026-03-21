@@ -3,7 +3,7 @@
 Student Feedback Router for MINI-RAG Backend
 
 Allows students (and optionally teachers) to send anonymous or identified feedback to admins.
-All feedback is stored in Supabase.
+All feedback is stored in Supabase..
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
