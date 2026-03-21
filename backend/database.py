@@ -1,4 +1,3 @@
-
 """
 Database Configuration for MINI-RAG Backend
 
@@ -64,4 +63,3 @@ def get_supabase():
 # Run on import
 # ---------------------------------------------------------------------------
 init_supabase()
-
