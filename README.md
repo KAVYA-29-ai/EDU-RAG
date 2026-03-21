@@ -357,3 +357,4 @@ https://github.com/KAVYA-29-ai/MINIRAG2
 [Report Bug](https://github.com/KAVYA-29-ai/MINIRAG2/issues) · [Request Feature](https://github.com/KAVYA-29-ai/MINIRAG2/issues)
 
 </div>
+Testing CodeRabbit integration 🚀
