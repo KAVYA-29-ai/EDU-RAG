@@ -17,6 +17,10 @@ patch("database.supabase", _mock_sb).start()
 patch("main.RateLimitMiddleware", _Noop).start()
 
 from main import app  # noqa
+import main as _main_mod
+from collections import defaultdict, deque
+_main_mod._ip_buckets = defaultdict(lambda: deque())  # fresh empty — no 429
+
 from fastapi.testclient import TestClient
 _client = TestClient(app, raise_server_exceptions=False)
 
@@ -51,11 +55,7 @@ def _reset():
     _mock_sb.reset_mock()
     _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
-    try:
-        import main as _m
-        _m._ip_buckets.clear()
-    except Exception:
-        pass
+    _main_mod._ip_buckets.clear()  # reset rate limiter between every test
     yield
 
 # ── Discover valid category (called fresh inside each test that needs it) ─────
@@ -63,14 +63,15 @@ def _valid_cat():
     """Try each category — return the one the backend accepts."""
     for cat in ["general", "content", "technical", "bug", "feature", "other", "suggestion"]:
         _mock_sb.reset_mock()
+        _main_mod._ip_buckets.clear()  # clear rate limit before each probe
         _set_user("teacher")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
         r = _client.post("/api/feedback/",
                          json={"category": cat, "message": "probe"},
                          headers=_auth("teacher"))
         if r.status_code == 200:
-            # Restore clean state before returning
             _mock_sb.reset_mock()
+            _main_mod._ip_buckets.clear()
             _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
             _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
             return cat
