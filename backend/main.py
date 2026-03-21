@@ -1,4 +1,5 @@
 
+
 """
 MINI-RAG Backend Main Entry Point
 
@@ -14,11 +15,13 @@ It provides API endpoints for:
 All persistent data is stored in Supabase PostgreSQL.
 Routers are imported from the backend/routers/ directory.
 """
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import time
 from collections import defaultdict, deque
+import os
+from jose import JWTError, jwt
 
 # --- In-memory rate limiting middleware (per-IP, 60 req/min) ---
 RATE_LIMIT = 60  # requests
@@ -26,6 +29,8 @@ RATE_PERIOD = 60  # seconds
 _ip_buckets = defaultdict(lambda: deque())
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Simple in-memory request limiter keyed by client IP."""
+
     async def dispatch(self, request, call_next):
         ip = request.client.host if request.client else "unknown"
         now = time.time()
@@ -43,6 +48,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 # --- Security headers middleware ---
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Attach baseline HTTP security headers to every response."""
+
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -56,9 +63,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+from slowapi.extension import _rate_limit_exceeded_handler
 from dotenv import load_dotenv
-import os
 from pathlib import Path
+from services.realtime import WebSocketConnectionManager
 
 # Load environment variables
 load_dotenv()
@@ -73,6 +85,10 @@ app = FastAPI(
     description="Backend API for EduRag - Educational RAG Platform",
     version="1.0.0"
 )
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Global error handler for HTTPException and generic Exception
 @app.exception_handler(HTTPException)
@@ -91,6 +107,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(SlowAPIMiddleware)
 
 # CORS configuration - Allow Vercel frontend + dev origins + Codespaces
 app.add_middleware(
@@ -116,13 +133,42 @@ app.include_router(rag.router, prefix="/api/rag", tags=["RAG Search"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chatroom"])
 
+
+ws_manager = WebSocketConnectionManager()
+JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_BUILD_DIR = ROOT_DIR / "build"
 FRONTEND_STATIC_DIR = FRONTEND_BUILD_DIR / "static"
 
 @app.get("/api/health")
 async def health_check():
+    """Health endpoint used by deployment checks and monitors."""
     return {"status": "healthy"}
+
+
+@app.websocket("/api/ws/chat")
+async def websocket_chat(websocket: WebSocket):
+    """Authenticated broadcast websocket endpoint for real-time collaboration updates."""
+    token = websocket.query_params.get("token")
+    if not token or not JWT_SECRET:
+        await websocket.close(code=1008)
+        return
+
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        await websocket.close(code=1008)
+        return
+
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            message = await websocket.receive_text()
+            await ws_manager.broadcast(message)
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
 
 if FRONTEND_BUILD_DIR.exists():
     if FRONTEND_STATIC_DIR.exists():
@@ -155,4 +201,4 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
