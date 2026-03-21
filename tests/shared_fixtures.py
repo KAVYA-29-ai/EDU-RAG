@@ -9,6 +9,8 @@ fake_get_supabase = _c.fake_get_supabase
 client = _c.client
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+TEST_PASSWORD = "testpass123"  # NOSONAR - test credential only
+TEST_JWT_SECRET = "your-secret-key"  # NOSONAR - test secret only
 
 
 def _hashed(plain):
@@ -26,7 +28,7 @@ def _jwt(role="student"):
             "role": role,
             "exp": datetime.utcnow() + timedelta(minutes=60),
         },
-        os.getenv("JWT_SECRET", "your-secret-key"),
+        os.getenv("JWT_SECRET", TEST_JWT_SECRET),
         algorithm="HS256",
     )
 
@@ -35,7 +37,7 @@ def auth(role="student"):
     return {"Authorization": f"Bearer {_jwt(role)}"}
 
 
-def make_user(role="student", password="testpass123"):
+def make_user(role="student", password=TEST_PASSWORD):
     """institution_id = '{role}001' — must match _jwt()."""
     return {
         "id": f"uuid-{role}",
@@ -52,6 +54,10 @@ def make_user(role="student", password="testpass123"):
 def mock_user(role="student"):
     """Mock the get_current_user DB fetch."""
     mock_sb.table.return_value \
+           .select.return_value \
+           .eq.return_value \
+           .limit.return_value \
+           .execute.return_value = MagicMock(data=[make_user(role)])
            .select.return_value \
            .eq.return_value \
            .limit.return_value \
