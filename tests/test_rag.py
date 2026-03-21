@@ -32,6 +32,13 @@ for mod in list(sys.modules.keys()):
 
 patch("main.RateLimitMiddleware", _Noop).start()
 from main import app  # noqa
+
+# Patch get_supabase in routers directly
+import routers.auth as _r_auth
+import routers.rag as _r_rag
+_r_auth.get_supabase = _fake_db
+_r_rag.get_supabase = _fake_db
+
 from fastapi.testclient import TestClient
 
 # Remove rate limit middleware from app's middleware stack if already added
