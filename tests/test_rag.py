@@ -13,12 +13,14 @@ def reset():
 
 
 def make_chunk():
-    return {"id": "chunk-001", "content": "Neural nets learn via backprop.", "source_file": "ml.pdf", "page_number": 3}
+    return {"id": "chunk-001", "content": "Neural nets learn via backprop.",
+            "source_file": "ml.pdf", "page_number": 3}
 
 
 def make_emb():
     import json
-    return {"id": "emb-001", "pdf_chunk_id": "chunk-001", "modality": "text", "embedding_json": json.dumps([0.9] * 768)}
+    return {"id": "emb-001", "pdf_chunk_id": "chunk-001", "modality": "text",
+            "embedding_json": json.dumps([0.9] * 768)}
 
 
 # ── RAG Search ────────────────────────────────────────────────────────────────
@@ -87,7 +89,8 @@ class TestRAGSearch:
 class TestPDFUpload:
 
     def test_no_token_auth_error(self):
-        r = client.post("/api/rag/upload-pdf", files={"file": ("t.pdf", io.BytesIO(b"%PDF"), "application/pdf")})
+        r = client.post("/api/rag/upload-pdf",
+                        files={"file": ("t.pdf", io.BytesIO(b"%PDF"), "application/pdf")})
         assert r.status_code in [401, 403]
 
     def test_non_pdf_400(self):
@@ -150,20 +153,29 @@ class TestPDFList:
 
 
 # ── Search History ────────────────────────────────────────────────────────────
+# rag.py: .select(...).eq("user_id",...).order(...).limit(...).execute()
+# get_current_user: .select("*").eq("id",...).limit(1).execute()
+# Fix: set BOTH chains so neither clobbers the other
 
 class TestSearchHistory:
 
-    def _setup(self, data):
-        mock_user()
-        mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[make_user()])
-        mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=data)
+    def _setup(self, hist_data):
+        user = make_user("student")
+        # User fetch chain (get_current_user)
+        mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[user])
+        # History fetch chain (includes .order() between .eq() and .limit())
+        mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=hist_data)
 
     def test_no_token_auth_error(self):
         r = client.get("/api/rag/search-history")
         assert r.status_code in [401, 403]
 
     def test_returns_list(self):
-        self._setup([{"id": "h1", "query": "what is RAG", "language": "en", "results_count": 3, "created_at": "2026-01-01T10:00:00"}])
+        self._setup([{
+            "id": "h1", "query": "what is RAG",
+            "language": "en", "results_count": 3,
+            "created_at": "2026-01-01T10:00:00"
+        }])
         r = client.get("/api/rag/search-history", headers=auth())
         assert r.status_code == 200
         assert isinstance(r.json(), list)

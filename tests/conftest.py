@@ -4,7 +4,7 @@ import pathlib
 from unittest.mock import MagicMock, patch
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# ── Add tests/ dir to sys.path so shared_fixtures.py is importable ────────────
+# ── tests/ folder ko sys.path mein daalo ─────────────────────────────────────
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 # ── Env vars ──────────────────────────────────────────────────────────────────
@@ -16,20 +16,25 @@ os.environ["SUPABASE_KEY"] = "mock-anon-key"
 os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "mock-service-key"
 os.environ["GEMINI_API_KEY"] = "mock-gemini-key"
 
-# ── Shared mock ───────────────────────────────────────────────────────────────
+# ── Global shared mock ────────────────────────────────────────────────────────
 mock_sb = MagicMock()
 
 def fake_get_supabase():
     return mock_sb
 
-# ── Noop rate limiter ─────────────────────────────────────────────────────────
+# ── Kill rate limiter ─────────────────────────────────────────────────────────
 class _NoopMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         return await call_next(request)
 
-# ── Patch before any app import ───────────────────────────────────────────────
+# ── Patch BEFORE any app import ───────────────────────────────────────────────
 patch("database.init_supabase", lambda: None).start()
 patch("database.get_supabase", fake_get_supabase).start()
 patch("database.supabase_admin", mock_sb).start()
 patch("database.supabase", mock_sb).start()
 patch("main.RateLimitMiddleware", _NoopMiddleware).start()
+
+# ── Import app after patches ──────────────────────────────────────────────────
+from main import app  # noqa
+from fastapi.testclient import TestClient
+client = TestClient(app, raise_server_exceptions=False)
