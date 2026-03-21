@@ -194,3 +194,9 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 async def logout():
     """Logout endpoint — stateless, for client-side token removal."""
     return {"message": "Logged out successfully"}
+
+
+@router.post("/logout")
+async def logout():
+    """Logout endpoint — stateless, for client-side token removal."""
+    return {"message": "Logged out successfully"}
