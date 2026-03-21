@@ -13,12 +13,15 @@ import time
 import json
 import math
 import tempfile
+import logging
+import re
 
 from models import RAGQuery
 from database import get_supabase
 from routers.auth import get_current_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 STORAGE_BUCKET = "pdfs"   # Supabase Storage bucket name
 
@@ -243,7 +246,44 @@ def _cosine_similarity(vector_a, vector_b):
     return dot / (norm_a * norm_b)
 
 
-def _generate_rag_answer(client, user_query: str, retrieved_results: list):
+def _token_overlap_score(query_text: str, document_text: str) -> float:
+    """Compute lexical overlap ratio between query and chunk text."""
+    query_tokens = {tok for tok in re.findall(r"[a-zA-Z0-9_\u0900-\u097F]+", (query_text or "").lower()) if len(tok) > 2}
+    if not query_tokens:
+        return 0.0
+    doc_tokens = {tok for tok in re.findall(r"[a-zA-Z0-9_\u0900-\u097F]+", (document_text or "").lower()) if len(tok) > 2}
+    if not doc_tokens:
+        return 0.0
+    overlap = len(query_tokens.intersection(doc_tokens))
+    return overlap / len(query_tokens)
+
+
+def _phrase_match_score(query_text: str, document_text: str) -> float:
+    """Reward exact phrase presence for high-intent queries."""
+    query_clean = " ".join((query_text or "").lower().split())
+    doc_clean = " ".join((document_text or "").lower().split())
+    if not query_clean or not doc_clean:
+        return 0.0
+    return 1.0 if query_clean in doc_clean else 0.0
+
+
+def _language_alignment_score(language: str, document_text: str) -> float:
+    """Estimate match quality between requested language and chunk script/content."""
+    doc = document_text or ""
+    if not doc.strip():
+        return 0.0
+    lang = (language or "english").lower()
+    has_devanagari = bool(re.search(r"[\u0900-\u097F]", doc))
+    has_latin = bool(re.search(r"[A-Za-z]", doc))
+
+    if lang == "hindi":
+        return 1.0 if has_devanagari else 0.2
+    if lang == "hinglish":
+        return 1.0 if (has_devanagari and has_latin) else 0.5 if (has_devanagari or has_latin) else 0.1
+    return 1.0 if has_latin else 0.3
+
+
+def _generate_rag_answer(client, user_query: str, retrieved_results: list, language: str = "english"):
     """
     Generate an answer to the user query using retrieved context and Gemini models.
     Returns the generated answer as a string.
@@ -259,6 +299,11 @@ def _generate_rag_answer(client, user_query: str, retrieved_results: list):
             f"[Source {idx}: {source_name}, Page {page}]\n{result['content']}"
         )
 
+    language_instruction = {
+        "hindi": "Write your final answer in Hindi.",
+        "hinglish": "Write your final answer in Hinglish (Hindi + English mix).",
+    }.get((language or "english").lower(), "Write your final answer in English.")
+
     prompt = (
         "You are EduRag, an intelligent educational RAG (Retrieval-Augmented Generation) assistant.\n"
         "Your job is to generate a clear, helpful, and well-structured answer based ONLY on the retrieved context below.\n"
@@ -267,7 +312,8 @@ def _generate_rag_answer(client, user_query: str, retrieved_results: list):
         "2. At the END of your answer, add a 'Sources:' section listing which sources you used "
         "(e.g., 'Sources: Source 1 (filename.pdf, Page 3), Source 2 (filename.pdf, Page 7)').\n"
         "3. If the context does not contain enough info, say so clearly.\n"
-        "4. Keep the answer educational, concise, and well-formatted.\n\n"
+        "4. Keep the answer educational, concise, and well-formatted.\n"
+        f"5. {language_instruction}\n\n"
         f"Student's Question: {user_query}\n\n"
         "Retrieved Context:\n"
         + "\n\n".join(context_lines)
@@ -281,7 +327,7 @@ def _generate_rag_answer(client, user_query: str, retrieved_results: list):
             if text:
                 return text
         except Exception as e:
-            print(f"Generation failed with {model}: {e}")
+            logger.warning("Generation failed with %s: %s", model, e)
             continue
 
     # If both models fail, construct a basic answer from chunks
@@ -344,10 +390,31 @@ async def search_documents(
                         used_multimodal = True
                     chunk = chunk_map.get(emb["pdf_chunk_id"])
                     if chunk:
-                        ranked.append((similarity, chunk))
+                        lexical = _token_overlap_score(query.query, chunk.get("content", ""))
+                        phrase = _phrase_match_score(query.query, chunk.get("content", ""))
+                        language_bonus = _language_alignment_score(query.language, chunk.get("content", ""))
+                        blended_score = (0.68 * similarity) + (0.18 * lexical) + (0.08 * phrase) + (0.06 * language_bonus)
+                        ranked.append((blended_score, chunk, chunk_vector))
 
             ranked.sort(key=lambda item: item[0], reverse=True)
-            for similarity, chunk in ranked[:5]:
+
+            selected = []
+            selected_vectors = []
+            diversity_lambda = 0.82
+            for score, chunk, vector in ranked:
+                if len(selected) >= 5:
+                    break
+                if not selected_vectors:
+                    selected.append((score, chunk))
+                    selected_vectors.append(vector)
+                    continue
+                max_sim_to_selected = max(_cosine_similarity(vector, vec) for vec in selected_vectors)
+                mmr_score = (diversity_lambda * score) - ((1 - diversity_lambda) * max_sim_to_selected)
+                if mmr_score > 0.05 or len(selected) < 3:
+                    selected.append((score, chunk))
+                    selected_vectors.append(vector)
+
+            for similarity, chunk in selected:
                 results.append({
                     "id": chunk["id"],
                     "content": chunk["content"][:700],
@@ -373,7 +440,7 @@ async def search_documents(
         if not results:
             generated_answer = f"No relevant results found for \"{query.query}\". The indexed PDFs may not contain information on this topic. Try a different query or ask your teacher to upload relevant course materials."
         else:
-            generated_answer = _generate_rag_answer(gemini_client, query.query, results)
+            generated_answer = _generate_rag_answer(gemini_client, query.query, results, query.language)
         response_time = int((time.time() - start_time) * 1000)
 
         # Log search history
@@ -385,8 +452,8 @@ async def search_documents(
                 "results_count": len(results),
                 "response_time_ms": response_time,
             }).execute()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to log search history: %s", exc)
 
         return {
             "query": query.query,
@@ -400,6 +467,193 @@ async def search_documents(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pdfs/{pdf_id}/summary")
+async def summarize_pdf(
+    pdf_id: int,
+    language: str = "english",
+    current_user: dict = Depends(get_current_user),
+):
+    """Generate a concise study summary for an indexed PDF."""
+    if current_user.get("role") not in ["teacher", "admin", "student"]:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    sb = get_supabase()
+    pdf_resp = sb.table("pdfs").select("id, filename, status").eq("id", pdf_id).limit(1).execute()
+    pdf = pdf_resp.data[0] if pdf_resp.data else None
+    if not pdf:
+        raise HTTPException(status_code=404, detail="PDF not found")
+    if pdf.get("status") != "indexed":
+        raise HTTPException(status_code=400, detail="PDF must be indexed before summarization")
+
+    chunk_resp = (
+        sb.table("pdf_chunks")
+        .select("content, page_number")
+        .eq("pdf_id", pdf_id)
+        .order("chunk_index", desc=False)
+        .limit(20)
+        .execute()
+    )
+    chunks = chunk_resp.data or []
+    if not chunks:
+        raise HTTPException(status_code=404, detail="No indexed content available for summary")
+
+    context = "\n\n".join(f"Page {c.get('page_number', 1)}: {c.get('content', '')}" for c in chunks)
+    client = _get_gemini_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Gemini client is not configured")
+
+    language_instruction = {
+        "hindi": "Provide the summary in Hindi.",
+        "hinglish": "Provide the summary in Hinglish.",
+    }.get((language or "english").lower(), "Provide the summary in English.")
+
+    prompt = (
+        "You are EduRag. Create a practical study summary from the provided PDF excerpts.\n"
+        "Include: Key concepts, Important formulas/facts, and 5 quick revision bullets.\n"
+        f"{language_instruction}\n\n"
+        f"Source file: {pdf.get('filename')}\n\n"
+        f"Excerpts:\n{context}"
+    )
+
+    for model in [GENERATION_MODEL, GENERATION_MODEL_FALLBACK]:
+        try:
+            response = client.models.generate_content(model=model, contents=prompt)
+            summary_text = (response.text or "").strip()
+            if summary_text:
+                return {
+                    "pdf_id": pdf_id,
+                    "filename": pdf.get("filename"),
+                    "language": language,
+                    "summary": summary_text,
+                }
+        except Exception as exc:
+            logger.warning("Summary generation failed with %s: %s", model, exc)
+
+    raise HTTPException(status_code=500, detail="Failed to generate summary")
+
+
+@router.get("/recommendations")
+async def get_personalized_recommendations(
+    current_user: dict = Depends(get_current_user),
+):
+    """Return smart topic recommendations based on user's recent searches and global trends."""
+    sb = get_supabase()
+
+    history_resp = (
+        sb.table("search_history")
+        .select("query")
+        .eq("user_id", current_user.get("id"))
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+    user_queries = [row.get("query", "") for row in (history_resp.data or []) if row.get("query")]
+
+    trend_resp = sb.table("search_history").select("query").limit(200).execute()
+    all_queries = [row.get("query", "") for row in (trend_resp.data or []) if row.get("query")]
+
+    from collections import Counter
+
+    user_tokens = []
+    for query in user_queries:
+        user_tokens.extend([tok for tok in re.findall(r"[a-zA-Z0-9_\u0900-\u097F]+", query.lower()) if len(tok) > 3])
+
+    trend_tokens = []
+    for query in all_queries:
+        trend_tokens.extend([tok for tok in re.findall(r"[a-zA-Z0-9_\u0900-\u097F]+", query.lower()) if len(tok) > 3])
+
+    user_interest = Counter(user_tokens)
+    trending = Counter(trend_tokens)
+
+    recommendations = []
+    seen = set()
+    for token, _ in user_interest.most_common(5):
+        if token not in seen:
+            recommendations.append({"topic": token, "reason": "Based on your recent searches"})
+            seen.add(token)
+
+    for token, _ in trending.most_common(8):
+        if token not in seen and len(recommendations) < 10:
+            recommendations.append({"topic": token, "reason": "Trending among learners"})
+            seen.add(token)
+
+    return {
+        "user_id": current_user.get("id"),
+        "recommendations": recommendations,
+    }
+
+
+@router.post("/study-plan")
+async def generate_study_plan(
+    query: RAGQuery,
+    current_user: dict = Depends(get_current_user),
+):
+    """Generate an adaptive short-term study plan from user question + retrieved context."""
+    sb = get_supabase()
+    search_payload = await search_documents(query=query, current_user=current_user)
+    retrieved_results = search_payload.get("results", [])
+
+    if not retrieved_results:
+        return {
+            "query": query.query,
+            "language": query.language,
+            "study_plan": "No plan generated because no relevant study material was found.",
+            "recommended_actions": [
+                "Upload additional course notes",
+                "Try a more specific topic query",
+                "Ask your instructor for targeted PDFs",
+            ],
+        }
+
+    client = _get_gemini_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Gemini client is not configured")
+
+    compact_context = "\n\n".join(
+        f"Source: {r.get('source')} Page {r.get('page_number')}\n{r.get('content', '')[:500]}"
+        for r in retrieved_results[:5]
+    )
+
+    language_instruction = {
+        "hindi": "Provide the study plan in Hindi.",
+        "hinglish": "Provide the study plan in Hinglish.",
+    }.get((query.language or "english").lower(), "Provide the study plan in English.")
+
+    prompt = (
+        "You are an educational AI mentor. Build a 7-day actionable study plan.\n"
+        "Output sections:\n"
+        "1) Learning Goal\n2) Daily Plan (Day 1..Day 7)\n3) 5 Revision Questions\n4) Common Mistakes to Avoid\n"
+        f"{language_instruction}\n\n"
+        f"Student topic: {query.query}\n\n"
+        f"Context:\n{compact_context}"
+    )
+
+    for model in [GENERATION_MODEL, GENERATION_MODEL_FALLBACK]:
+        try:
+            response = client.models.generate_content(model=model, contents=prompt)
+            plan_text = (response.text or "").strip()
+            if plan_text:
+                try:
+                    sb.table("analytics_events").insert({
+                        "user_id": current_user.get("id"),
+                        "event_type": "study_plan_generated",
+                        "event_payload": json.dumps({"query": query.query, "language": query.language}),
+                    }).execute()
+                except Exception as exc:
+                    logger.warning("Failed to log study plan event: %s", exc)
+
+                return {
+                    "query": query.query,
+                    "language": query.language,
+                    "study_plan": plan_text,
+                    "sources_used": len(retrieved_results[:5]),
+                }
+        except Exception as exc:
+            logger.warning("Study plan generation failed with %s: %s", model, exc)
+
+    raise HTTPException(status_code=500, detail="Failed to generate study plan")
 
 @router.post("/upload-pdf")
 async def upload_pdf(
@@ -697,8 +951,8 @@ async def get_pdf_detail(
             u_resp = sb.table("users").select("name").eq("id", pdf["uploaded_by"]).limit(1).execute()
             if u_resp.data:
                 uploader_name = u_resp.data[0]["name"]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to resolve uploader name for pdf_id=%s: %s", pdf_id, exc)
 
     return {
         "id": pdf["id"],
