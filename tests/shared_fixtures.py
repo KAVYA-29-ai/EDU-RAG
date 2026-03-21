@@ -58,7 +58,3 @@ def mock_user(role="student"):
            .eq.return_value \
            .limit.return_value \
            .execute.return_value = MagicMock(data=[make_user(role)])
-           .select.return_value \
-           .eq.return_value \
-           .limit.return_value \
-           .execute.return_value = MagicMock(data=[make_user(role)])
