@@ -1,4 +1,35 @@
-# conftest.py
-# Environment variables and patches have been moved to shared_fixtures.py
-# to fix "ModuleNotFoundError: No module named 'conftest'" when running
-# Pytest locally and on GitHub Actions.
+import os
+import sys
+import pathlib
+from unittest.mock import MagicMock, patch
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# ── Add tests/ dir to sys.path so shared_fixtures.py is importable ────────────
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+
+# ── Env vars ──────────────────────────────────────────────────────────────────
+os.environ["JWT_SECRET"] = "your-secret-key"
+os.environ["JWT_ALGORITHM"] = "HS256"
+os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "60"
+os.environ["SUPABASE_URL"] = "https://mock.supabase.co"
+os.environ["SUPABASE_KEY"] = "mock-anon-key"
+os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "mock-service-key"
+os.environ["GEMINI_API_KEY"] = "mock-gemini-key"
+
+# ── Shared mock ───────────────────────────────────────────────────────────────
+mock_sb = MagicMock()
+
+def fake_get_supabase():
+    return mock_sb
+
+# ── Noop rate limiter ─────────────────────────────────────────────────────────
+class _NoopMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        return await call_next(request)
+
+# ── Patch before any app import ───────────────────────────────────────────────
+patch("database.init_supabase", lambda: None).start()
+patch("database.get_supabase", fake_get_supabase).start()
+patch("database.supabase_admin", mock_sb).start()
+patch("database.supabase", mock_sb).start()
+patch("main.RateLimitMiddleware", _NoopMiddleware).start()
