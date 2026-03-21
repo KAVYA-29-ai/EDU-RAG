@@ -16,9 +16,9 @@ def _user(role="student"):
 
 def _jwt(role="student"):
     from jose import jwt as j
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     return j.encode({"user_id": f"uuid-{role}", "institution_id": f"{role}001",
-                     "role": role, "exp": datetime.utcnow() + timedelta(minutes=60)},
+                     "role": role, "exp": datetime.now(timezone.utc) + timedelta(minutes=60)},
                     os.getenv("JWT_SECRET", "your-secret-key"), algorithm="HS256")
 
 def _auth(role="student"):
@@ -178,6 +178,9 @@ class TestSearchHistory:
 
     def test_empty_returns_list(self):
         self._setup([])
+        r = _client.get("/api/rag/search-history", headers=_auth())
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
         r = _client.get("/api/rag/search-history", headers=_auth())
         assert r.status_code == 200
         assert isinstance(r.json(), list)
