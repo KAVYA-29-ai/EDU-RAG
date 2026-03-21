@@ -1,48 +1,18 @@
-import os, sys, pathlib, pytest
-from unittest.mock import MagicMock, patch
-from starlette.middleware.base import BaseHTTPMiddleware
+import os, pytest
+from unittest.mock import MagicMock
+import _mock_setup as _ms
 
-# ── Setup ─────────────────────────────────────────────────────────────────────
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "backend"))
+_mock_sb = _ms.mock_sb
+_client = _ms.client
 
-_mock_sb = MagicMock()
-
-def _fake_db():
-    return _mock_sb
-
-class _Noop(BaseHTTPMiddleware):
-    async def dispatch(self, req, call_next):
-        return await call_next(req)
-
-patch("database.init_supabase", lambda: None).start()
-patch("database.get_supabase", _fake_db).start()
-patch("database.supabase_admin", _mock_sb).start()
-patch("database.supabase", _mock_sb).start()
-patch("main.RateLimitMiddleware", _Noop).start()
-
-from main import app  # noqa — after patches
-
-# Patch get_supabase in routers directly (they import it at load time)
-import routers.auth as _r_auth
-_r_auth.get_supabase = _fake_db
-
-from fastapi.testclient import TestClient
-_client = TestClient(app, raise_server_exceptions=False)
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 from passlib.context import CryptContext
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def _hash(p): return _pwd.hash(p)
 
 def _user(role="student", pw="testpass123"):
     return {"id": f"uuid-{role}", "name": f"{role} user",
             "institution_id": f"{role}001", "email": f"{role}@t.com",
             "role": role, "avatar": "male", "status": "active",
-            "password_hash": _hash(pw)}
-
-def _set_user(u):
-    _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[u])
+            "password_hash": _pwd.hash(pw)}
 
 def _jwt(role="student"):
     from jose import jwt as j
@@ -51,24 +21,23 @@ def _jwt(role="student"):
                      "role": role, "exp": datetime.utcnow() + timedelta(minutes=60)},
                     os.getenv("JWT_SECRET", "your-secret-key"), algorithm="HS256")
 
-def _tok(role="student"):
-    _set_user(_user(role))
-    r = _client.post("/api/auth/login", json={"institution_id": f"{role}001", "password": "testpass123"})
-    if r.status_code != 200: return None
-    return r.json().get("access_token") or r.json().get("token")
+def _auth(role="student"):
+    return {"Authorization": f"Bearer {_jwt(role)}"}
+
+def _set(role="student", data=None):
+    _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=data if data is not None else [_user(role)])
 
 @pytest.fixture(autouse=True)
 def _reset():
     _mock_sb.reset_mock()
+    _ms._main._ip_buckets.clear()
     _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
     yield
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
-
 class TestRegister:
     def test_success(self):
-        _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+        _set(data=[])
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_user()])
         r = _client.post("/api/auth/register", json={"name": "T", "institution_id": "student001",
             "email": "t@t.com", "password": "testpass123", "role": "student", "avatar": "male"})
@@ -76,7 +45,7 @@ class TestRegister:
         assert "access_token" in r.json()
 
     def test_duplicate_400(self):
-        _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[_user()])
+        _set(data=[_user()])
         r = _client.post("/api/auth/register", json={"name": "T", "institution_id": "student001",
             "email": "x@x.com", "password": "testpass123", "role": "student", "avatar": "male"})
         assert r.status_code == 400
@@ -96,26 +65,26 @@ class TestRegister:
 
 class TestLogin:
     def test_success(self):
-        _set_user(_user())
+        _set()
         r = _client.post("/api/auth/login", json={"institution_id": "student001", "password": "testpass123"})
         assert r.status_code == 200
         assert "access_token" in r.json()
 
     def test_token_has_role(self):
         from jose import jwt as j
-        _set_user(_user("teacher"))
+        _set("teacher")
         r = _client.post("/api/auth/login", json={"institution_id": "teacher001", "password": "testpass123"})
         assert r.status_code == 200
         p = j.decode(r.json()["access_token"], os.getenv("JWT_SECRET", "your-secret-key"), algorithms=["HS256"])
         assert p["role"] == "teacher"
 
     def test_wrong_password_401(self):
-        _set_user(_user("student", pw="correct"))
+        _set("student", data=[_user("student", pw="correct")])
         r = _client.post("/api/auth/login", json={"institution_id": "student001", "password": "WRONG"})
         assert r.status_code == 401
 
     def test_nonexistent_401(self):
-        _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+        _set(data=[])
         r = _client.post("/api/auth/login", json={"institution_id": "nobody", "password": "any"})
         assert r.status_code == 401
 
@@ -128,7 +97,7 @@ class TestLogin:
         assert r.status_code == 422
 
     def test_response_has_user(self):
-        _set_user(_user("admin"))
+        _set("admin")
         r = _client.post("/api/auth/login", json={"institution_id": "admin001", "password": "testpass123"})
         assert r.status_code == 200
         assert r.json()["user"]["role"] == "admin"
@@ -136,12 +105,13 @@ class TestLogin:
 class TestMe:
     def test_valid_token_200(self):
         u = _user("teacher")
-        _set_user(u)
-        tok = _tok("teacher")
-        assert tok, "Login returned no token"
-        _set_user(u)
-        r = _client.get("/api/auth/me", headers={"Authorization": f"Bearer {tok}"})
-        assert r.status_code == 200
+        _set("teacher", data=[u])
+        r = _client.post("/api/auth/login", json={"institution_id": "teacher001", "password": "testpass123"})
+        assert r.status_code == 200, f"Login failed: {r.json()}"
+        tok = r.json()["access_token"]
+        _set("teacher", data=[u])
+        r2 = _client.get("/api/auth/me", headers={"Authorization": f"Bearer {tok}"})
+        assert r2.status_code == 200
 
     def test_no_token_auth_error(self):
         r = _client.get("/api/auth/me")
