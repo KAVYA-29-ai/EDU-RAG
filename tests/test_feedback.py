@@ -51,52 +51,70 @@ def _reset():
     _mock_sb.reset_mock()
     _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
+    try:
+        import main as _m
+        _m._ip_buckets.clear()
+    except Exception:
+        pass
     yield
 
-# Discover valid category once
-def _probe():
+# ── Discover valid category (called fresh inside each test that needs it) ─────
+def _valid_cat():
+    """Try each category — return the one the backend accepts."""
     for cat in ["general", "content", "technical", "bug", "feature", "other", "suggestion"]:
         _mock_sb.reset_mock()
         _set_user("teacher")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
-        r = _client.post("/api/feedback/", json={"category": cat, "message": "probe"}, headers=_auth("teacher"))
+        r = _client.post("/api/feedback/",
+                         json={"category": cat, "message": "probe"},
+                         headers=_auth("teacher"))
         if r.status_code == 200:
+            # Restore clean state before returning
+            _mock_sb.reset_mock()
+            _mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+            _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
             return cat
     return "general"
 
-CAT = _probe()
+
+# ── Submit Feedback ───────────────────────────────────────────────────────────
 
 class TestSubmitFeedback:
+
     def test_no_token_auth_error(self):
-        r = _client.post("/api/feedback/", json={"category": CAT, "message": "t"})
+        r = _client.post("/api/feedback/", json={"category": "general", "message": "t"})
         assert r.status_code in [401, 403]
 
     def test_teacher_200(self):
+        cat = _valid_cat()
         _set_user("teacher")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
-        r = _client.post("/api/feedback/", json={"category": CAT, "message": "Good"}, headers=_auth("teacher"))
+        r = _client.post("/api/feedback/", json={"category": cat, "message": "Good"}, headers=_auth("teacher"))
         assert r.status_code == 200
 
     def test_teacher_response_has_key(self):
+        cat = _valid_cat()
         _set_user("teacher")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
-        r = _client.post("/api/feedback/", json={"category": CAT, "message": "Good"}, headers=_auth("teacher"))
+        r = _client.post("/api/feedback/", json={"category": cat, "message": "Good"}, headers=_auth("teacher"))
         assert r.status_code == 200
         assert "message" in r.json() or "feedback" in r.json()
 
     def test_student_blocked_403(self):
+        cat = _valid_cat()
         _set_user("student")
-        r = _client.post("/api/feedback/", json={"category": CAT, "message": "Hi"}, headers=_auth("student"))
+        r = _client.post("/api/feedback/", json={"category": cat, "message": "Hi"}, headers=_auth("student"))
         assert r.status_code == 403
 
     def test_admin_blocked_403(self):
+        cat = _valid_cat()
         _set_user("admin")
-        r = _client.post("/api/feedback/", json={"category": CAT, "message": "Hi"}, headers=_auth("admin"))
+        r = _client.post("/api/feedback/", json={"category": cat, "message": "Hi"}, headers=_auth("admin"))
         assert r.status_code == 403
 
     def test_missing_message_422(self):
         _set_user("teacher")
-        r = _client.post("/api/feedback/", json={"category": CAT}, headers=_auth("teacher"))
+        r = _client.post("/api/feedback/", json={"category": "general"}, headers=_auth("teacher"))
         assert r.status_code == 422
 
     def test_missing_category_422(self):
@@ -105,12 +123,17 @@ class TestSubmitFeedback:
         assert r.status_code == 422
 
     def test_never_500(self):
+        cat = _valid_cat()
         _set_user("teacher")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[_fb()])
-        r = _client.post("/api/feedback/", json={"category": CAT, "message": "Fine"}, headers=_auth("teacher"))
+        r = _client.post("/api/feedback/", json={"category": cat, "message": "Fine"}, headers=_auth("teacher"))
         assert r.status_code != 500
 
+
+# ── Get All Feedback ──────────────────────────────────────────────────────────
+
 class TestGetFeedback:
+
     def test_no_token_auth_error(self):
         r = _client.get("/api/feedback/")
         assert r.status_code in [401, 403]
@@ -145,9 +168,16 @@ class TestGetFeedback:
         r = _client.get("/api/feedback/", headers=_auth("admin"))
         assert r.status_code != 500
 
+
+# ── My Feedback ───────────────────────────────────────────────────────────────
+# feedback.py /mine: sb.table("feedback").select("*").eq("sender_id", id).order(...).execute()
+# This does NOT have .limit() — so chain is: .select().eq().order().execute()
+
 class TestMyFeedback:
+
     def test_teacher_gets_list(self):
         _set_user("teacher")
+        # /mine chain: select("*").eq("sender_id",...).order(...).execute()
         _mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(data=[_fb()])
         r = _client.get("/api/feedback/mine", headers=_auth("teacher"))
         assert r.status_code == 200
@@ -164,7 +194,13 @@ class TestMyFeedback:
         assert r.status_code == 200
         _mock_sb.table.return_value.select.return_value.eq.assert_called()
 
+
+# ── Student Feedback ──────────────────────────────────────────────────────────
+# student_feedback.py GET: sb.table("student_feedback").select("*").order(...).execute()
+# No .eq() in GET — chain is: .select().order().execute()
+
 class TestStudentFeedback:
+
     def test_student_post_200(self):
         _set_user("student")
         _mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{"id": "s1", "message": "Good"}])
@@ -178,7 +214,10 @@ class TestStudentFeedback:
 
     def test_admin_can_view_200(self):
         _set_user("admin")
-        _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(data=[{"id": "s1", "message": "Good"}])
+        # GET chain: select("*").order("created_at", desc=True).execute()
+        _mock_sb.table.return_value.select.return_value.order.return_value.execute.return_value = MagicMock(
+            data=[{"id": "s1", "message": "Good", "is_anonymous": True}]
+        )
         r = _client.get("/api/student-feedback", headers=_auth("admin"))
         assert r.status_code == 200
         assert isinstance(r.json(), list)
