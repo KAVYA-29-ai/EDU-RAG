@@ -21,6 +21,11 @@ patch("database.supabase", _mock_sb).start()
 patch("main.RateLimitMiddleware", _Noop).start()
 
 from main import app  # noqa — after patches
+
+# Patch get_supabase in routers directly (they import it at load time)
+import routers.auth as _r_auth
+_r_auth.get_supabase = _fake_db
+
 from fastapi.testclient import TestClient
 _client = TestClient(app, raise_server_exceptions=False)
 
