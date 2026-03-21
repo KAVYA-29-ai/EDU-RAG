@@ -1,54 +1,29 @@
 import pytest
 from unittest.mock import MagicMock
-from conftest import app, mock_sb, fake_get_supabase, TestClient
+from shared_fixtures import client, mock_sb, auth, make_user, mock_user, _hashed, _jwt
+import os
 
-client = TestClient(app, raise_server_exceptions=False)
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def reset_mock():
+def reset():
     mock_sb.reset_mock()
     mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[])
     yield
 
-def _hashed(plain: str) -> str:
-    from passlib.context import CryptContext
-    return CryptContext(schemes=["bcrypt"], deprecated="auto").hash(plain)
 
-def make_user(role="student", password="testpass123"):
-    return {
-        "id": "uuid-001", "name": "Test User",
-        "institution_id": "test123", "email": "test@example.com",
-        "role": role, "avatar": "male", "status": "active",
-        "password_hash": _hashed(password),
-    }
-
-def setup_login_mock(user):
+def setup_login(user):
     mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[user])
 
+
 def get_token(role="student", password="testpass123"):
-    user = make_user(role=role, password=password)
-    setup_login_mock(user)
+    user = make_user(role=role, institution_id="test123", password=password)
+    setup_login(user)
     r = client.post("/api/auth/login", json={"institution_id": "test123", "password": password})
     if r.status_code != 200:
         return None
-    d = r.json()
-    return d.get("access_token") or d.get("token")
+    return r.json().get("access_token") or r.json().get("token")
 
-def _jwt(role="student"):
-    from jose import jwt as jose_jwt
-    import os
-    from datetime import datetime, timedelta
-    return jose_jwt.encode(
-        {"user_id": "uuid-001", "institution_id": "test123", "role": role,
-         "exp": datetime.utcnow() + timedelta(minutes=60)},
-        os.getenv("JWT_SECRET", "your-secret-key"), algorithm="HS256"
-    )
-
-def auth(role="student"):
-    return {"Authorization": f"Bearer {_jwt(role)}"}
 
 # ── Register ──────────────────────────────────────────────────────────────────
 
@@ -65,7 +40,7 @@ class TestRegister:
         assert r.status_code == 200
         assert "access_token" in r.json()
 
-    def test_register_duplicate_returns_400(self):
+    def test_register_duplicate_400(self):
         mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[make_user()])
         r = client.post("/api/auth/register", json={
             "name": "Another", "institution_id": "test123",
@@ -102,27 +77,25 @@ class TestRegister:
 class TestLogin:
 
     def test_login_success_returns_token(self):
-        setup_login_mock(make_user())
+        setup_login(make_user(institution_id="test123"))
         r = client.post("/api/auth/login", json={"institution_id": "test123", "password": "testpass123"})
         assert r.status_code == 200
         assert "access_token" in r.json()
 
-    def test_login_token_is_valid_jwt_with_role(self):
+    def test_login_token_has_role(self):
         from jose import jwt as jose_jwt
-        import os
-        setup_login_mock(make_user(role="teacher"))
+        setup_login(make_user(role="teacher", institution_id="test123"))
         r = client.post("/api/auth/login", json={"institution_id": "test123", "password": "testpass123"})
         assert r.status_code == 200
-        token = r.json()["access_token"]
-        payload = jose_jwt.decode(token, os.getenv("JWT_SECRET", "your-secret-key"), algorithms=["HS256"])
+        payload = jose_jwt.decode(r.json()["access_token"], os.getenv("JWT_SECRET", "your-secret-key"), algorithms=["HS256"])
         assert payload["role"] == "teacher"
 
     def test_login_wrong_password_401(self):
-        setup_login_mock(make_user(password="correctpass"))
+        setup_login(make_user(institution_id="test123", password="correctpass"))
         r = client.post("/api/auth/login", json={"institution_id": "test123", "password": "WRONG"})
         assert r.status_code == 401
 
-    def test_login_nonexistent_user_401(self):
+    def test_login_nonexistent_401(self):
         mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
         r = client.post("/api/auth/login", json={"institution_id": "ghost", "password": "any"})
         assert r.status_code == 401
@@ -135,8 +108,8 @@ class TestLogin:
         r = client.post("/api/auth/login", json={"institution_id": "test123"})
         assert r.status_code == 422
 
-    def test_login_response_has_user_object(self):
-        setup_login_mock(make_user(role="admin"))
+    def test_login_response_has_user(self):
+        setup_login(make_user(role="admin", institution_id="test123"))
         r = client.post("/api/auth/login", json={"institution_id": "test123", "password": "testpass123"})
         assert r.status_code == 200
         assert r.json()["user"]["role"] == "admin"
@@ -147,30 +120,27 @@ class TestLogin:
 class TestMe:
 
     def test_me_valid_token_200(self):
-        user = make_user(role="teacher")
-        setup_login_mock(user)
+        user = make_user(role="teacher", institution_id="test123")
+        setup_login(user)
         token = get_token(role="teacher")
-        assert token, "Login failed — check mock"
+        assert token, "Login failed"
         mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[user])
         r = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 200
 
-    def test_me_no_token_is_auth_error(self):
+    def test_me_no_token_auth_error(self):
         r = client.get("/api/auth/me")
         assert r.status_code in [401, 403]
-        assert r.status_code != 200
 
-    def test_me_invalid_token_401(self):
+    def test_me_fake_token_401(self):
         r = client.get("/api/auth/me", headers={"Authorization": "Bearer fake.token.here"})
         assert r.status_code == 401
 
     def test_me_expired_token_401(self):
         from jose import jwt as jose_jwt
         from datetime import datetime, timedelta
-        import os
         expired = jose_jwt.encode(
-            {"user_id": "uuid-001", "role": "student",
-             "exp": datetime.utcnow() - timedelta(hours=1)},
+            {"user_id": "uuid-001", "role": "student", "exp": datetime.utcnow() - timedelta(hours=1)},
             os.getenv("JWT_SECRET", "your-secret-key"), algorithm="HS256"
         )
         r = client.get("/api/auth/me", headers={"Authorization": f"Bearer {expired}"})
