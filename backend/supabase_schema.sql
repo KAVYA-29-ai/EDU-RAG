@@ -157,3 +157,6 @@ CREATE POLICY "Service role storage access"
 ON storage.objects FOR ALL
 USING (bucket_id = 'pdfs')
 WITH CHECK (bucket_id = 'pdfs');
+ON storage.objects FOR ALL
+USING (bucket_id = 'pdfs')
+WITH CHECK (bucket_id = 'pdfs');
