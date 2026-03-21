@@ -257,6 +257,3 @@ async def verify_email(token: str = Query(..., min_length=1)):
         return {"message": "Email verified successfully. You can now login."}
     except JWTError:
         raise HTTPException(status_code=400, detail="Invalid or expired verification token")
-async def logout():
-    """Logout endpoint — stateless, for client-side token removal."""
-    return {"message": "Logged out successfully"}
