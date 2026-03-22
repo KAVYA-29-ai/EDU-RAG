@@ -1,90 +1,259 @@
 
 """
-Chat Router for MINI-RAG Backend
+Authentication Router for MINI-RAG Backend
 
-Provides endpoints for student chatroom functionality. Messages are auto-deleted after a configurable timer.
-Includes message creation and retrieval endpoints. Only students can send messages.
+Handles user registration, login, JWT token management, and authentication-related endpoints.
+All user data is stored in Supabase.
 """
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from typing import List
-from datetime import datetime, timedelta
+from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from datetime import datetime, timedelta, timezone
 import os
+from dotenv import load_dotenv
 
+from models import UserRegister, UserLogin, Token
 from database import get_supabase
-from routers.auth import get_current_user
+
+load_dotenv()
 
 router = APIRouter()
+security = HTTPBearer()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-CHAT_MESSAGE_LIFETIME = int(os.getenv('CHAT_MESSAGE_LIFETIME', 60))  # seconds
+JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+EMAIL_VERIFICATION_REQUIRED = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() in {"1", "true", "yes"}
+EMAIL_VERIFICATION_EXPIRE_HOURS = int(os.getenv("EMAIL_VERIFICATION_EXPIRE_HOURS", "24"))
 
-class ChatMessageCreate(BaseModel):
-    message: str
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET is required. Set it in your environment or .env file.")
 
-class ChatMessageOut(BaseModel):
-    id: int
-    sender_id: int
-    sender_name: str
-    message: str
-    created_at: datetime
 
-@router.post("/messages", response_model=ChatMessageOut)
-async def send_message(
-    payload: ChatMessageCreate,
-    current_user: dict = Depends(get_current_user),
-):
-    if current_user.get("role") != "student":
-        raise HTTPException(status_code=403, detail="Only students can send messages")
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    Verify a plain password against its hashed version.
+    Returns True if the password matches, False otherwise.
+    """
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_password_hash(password: str) -> str:
+    """
+    Hash a plain password using bcrypt.
+    Returns the hashed password string.
+    """
+    return pwd_context.hash(password)
+
+
+def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
+    """
+    Create a JWT access token with the given data and expiration delta.
+    Returns the encoded JWT token as a string.
+    """
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """
+    Decode JWT and fetch the user row from Supabase.
+    Returns the user dictionary or raises HTTPException if invalid.
+    """
+    token = credentials.credentials
     try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id: int = payload.get("user_id")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
         sb = get_supabase()
-        row = {
-            "sender_id": current_user["id"],
-            "sender_name": current_user["name"],
-            "message": payload.message,
+        resp = sb.table("users").select("*").eq("id", user_id).limit(1).execute()
+        user = resp.data[0] if resp.data else None
+        if user:
+            return {
+                "id": user["id"],
+                "name": user["name"],
+                "institution_id": user["institution_id"],
+                "email": user.get("email") or "",
+                "role": user["role"],
+                "avatar": user.get("avatar", "male"),
+                "status": user.get("status", "active"),
+            }
+        return {
+            "id": user_id,
+            "institution_id": payload.get("institution_id", ""),
+            "role": payload.get("role", "student"),
         }
-        resp = sb.table("chat_messages").insert(row).execute()
-        msg = resp.data[0]
-        return msg
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-@router.get("/messages", response_model=List[ChatMessageOut])
-async def get_messages(current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "student":
-        raise HTTPException(status_code=403, detail="Only students can view messages")
-    try:
-        sb = get_supabase()
-        cutoff = datetime.utcnow() - timedelta(hours=1)
-        resp = sb.table("chat_messages").select("*").gte("created_at", cutoff.isoformat()).order("created_at", desc=False).execute()
-        return resp.data or []
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/messages/{message_id}")
-async def delete_message(message_id: int, current_user: dict = Depends(get_current_user)):
+async def require_role(allowed_roles: list):
     """
-    Allow a user to delete their own chat message by ID.
+    Dependency generator to require a user to have one of the allowed roles.
+    Returns a dependency function for FastAPI routes.
     """
-    try:
-        sb = get_supabase()
-        # Check if the message belongs to the current user
-        resp = sb.table("chat_messages").select("*").eq("id", message_id).execute()
-        if not resp.data or resp.data[0]["sender_id"] != current_user["id"]:
-            raise HTTPException(status_code=403, detail="You can only delete your own messages.")
-        sb.table("chat_messages").delete().eq("id", message_id).execute()
-        return {"deleted": True}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    async def check_role(user: dict = Depends(get_current_user)):
+        if user.get("role") not in allowed_roles:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return user
+    return check_role
 
-@router.delete("/messages/cleanup")
-async def cleanup_old_messages():
+
+def create_email_verification_token(user_id: int, email: str) -> str:
+    """Create a short-lived token used by the email verification endpoint."""
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_EXPIRE_HOURS)
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "token_type": "email_verification",
+        "exp": expires_at,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+@router.post("/register", response_model=Token)
+async def register(user_data: UserRegister):
     """
-    Delete chat messages older than 1 hour.
+    Register a new user and store their data in Supabase.
+    Returns a JWT token and user info on success.
     """
     try:
         sb = get_supabase()
-        cutoff = datetime.utcnow() - timedelta(hours=1)
-        resp = sb.table("chat_messages").delete().lt("created_at", cutoff.isoformat()).execute()
-        return {"deleted": resp.count}
+        existing = sb.table("users").select("id").eq("institution_id", user_data.institution_id).limit(1).execute()
+        if existing.data and len(existing.data) > 0:
+            raise HTTPException(status_code=400, detail="User with this Institution ID already exists")
+
+        hashed_password = get_password_hash(user_data.password)
+        initial_status = "pending_verification" if (EMAIL_VERIFICATION_REQUIRED and user_data.email) else "active"
+        row = {
+            "name": user_data.name,
+            "institution_id": user_data.institution_id,
+            "email": user_data.email or "",
+            "password_hash": hashed_password,
+            "role": user_data.role.value,
+            "avatar": user_data.avatar,
+            "status": initial_status,
+        }
+        resp = sb.table("users").insert(row).execute()
+        new_user = resp.data[0]
+
+        if EMAIL_VERIFICATION_REQUIRED and (new_user.get("email") or ""):
+            verification_token = create_email_verification_token(new_user["id"], new_user.get("email") or "")
+            return Token(
+                access_token="",
+                token_type="bearer",
+                user={
+                    "id": new_user["id"],
+                    "name": new_user["name"],
+                    "institution_id": new_user["institution_id"],
+                    "email": new_user.get("email") or "",
+                    "role": new_user["role"],
+                    "avatar": new_user.get("avatar", "male"),
+                    "status": new_user.get("status", "pending_verification"),
+                },
+                requires_verification=True,
+                message=(
+                    "Email verification required. Open /api/auth/verify-email?token="
+                    f"{verification_token}"
+                ),
+            )
+
+        access_token = create_access_token({
+            "user_id": new_user["id"],
+            "institution_id": new_user["institution_id"],
+            "role": new_user["role"],
+        })
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user={
+                "id": new_user["id"],
+                "name": new_user["name"],
+                "institution_id": new_user["institution_id"],
+                "email": new_user.get("email") or "",
+                "role": new_user["role"],
+                "avatar": new_user.get("avatar", "male"),
+            },
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/login", response_model=Token)
+async def login(user_data: UserLogin):
+    """
+    Login a user by verifying credentials against the Supabase users table.
+    Returns a JWT token and user info on success.
+    """
+    try:
+        sb = get_supabase()
+        resp = sb.table("users").select("*").eq("institution_id", user_data.institution_id).limit(1).execute()
+        user = resp.data[0] if resp.data else None
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        if user.get("status") == "pending_verification":
+            raise HTTPException(status_code=403, detail="Please verify your email before login")
+        if not verify_password(user_data.password, user["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        access_token = create_access_token({
+            "user_id": user["id"],
+            "institution_id": user["institution_id"],
+            "role": user["role"],
+        })
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user={
+                "id": user["id"],
+                "name": user["name"],
+                "institution_id": user["institution_id"],
+                "email": user.get("email") or "",
+                "role": user["role"],
+                "avatar": user.get("avatar", "male"),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    """Get the current authenticated user's information."""
+    return current_user
+
+
+@router.post("/logout")
+async def logout():
+    """Logout endpoint — stateless, for client-side token removal."""
+    return {"message": "Logged out successfully"}
+
+
+@router.get("/verify-email")
+async def verify_email(token: str = Query(..., min_length=1)):
+    """Verify a user's email using a signed verification token."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("token_type") != "email_verification":
+            raise HTTPException(status_code=400, detail="Invalid verification token")
+
+        user_id = payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Invalid verification token")
+
+        sb = get_supabase()
+        resp = sb.table("users").update({"status": "active"}).eq("id", user_id).execute()
+        if not resp.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {"message": "Email verified successfully. You can now login."}
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
