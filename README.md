@@ -1,5 +1,3 @@
-
-
 # 🎓 EduRag - AI-Powered Educational RAG Platform
 
 <p align="center">
@@ -363,6 +361,9 @@ Use these docs after deployment to verify every endpoint and schema contract.
 |--------|----------|-------------|
 | POST | `/api/auth/register` | Register new user |
 | POST | `/api/auth/login` | Login, get JWT token |
+| POST | `/api/auth/forgot-password` | Request password reset link |
+| POST | `/api/auth/reset-password` | Reset password using reset token |
+| POST/PATCH/PUT | `/api/auth/change-password` | Change password for logged-in user |
 | GET | `/api/auth/me` | Get current user profile |
 | POST | `/api/auth/logout` | Logout |
 
@@ -385,7 +386,7 @@ Use these docs after deployment to verify every endpoint and schema contract.
 | GET | `/api/users/` | List all users (admin) |
 | GET | `/api/users/students` | List students |
 | GET | `/api/users/teachers` | List teachers |
-| PUT | `/api/users/{id}/role` | Change user role (admin) |
+| PATCH | `/api/users/{id}/role` | Change user role (admin) |
 | DELETE | `/api/users/{id}` | Delete user (admin) |
 
 ### Feedback & Analytics
@@ -417,6 +418,7 @@ Use these docs after deployment to verify every endpoint and schema contract.
 - [x] Student anonymous feedback
 - [x] User management (CRUD, role changes)
 - [x] System analytics dashboard
+- [x] Forgot password + reset token flow
 - [x] Animated UI with gradient backgrounds
 - [x] Vercel serverless deployment configuration
 - [x] CORS configured for Vercel + Codespaces + localhost
@@ -425,7 +427,7 @@ Use these docs after deployment to verify every endpoint and schema contract.
 
 ## 🗺️ Future Roadmap
 
-- [ ] 🔑 **Forgot Password** — email OTP-based password reset flow
+- [ ] 🔑 Password reset with OTP and branded email templates
 - [ ] 🔐 Google OAuth integration
 - [ ] 📱 Mobile-responsive optimization
 - [ ] 🌐 Real-time collaboration features
@@ -450,9 +452,29 @@ ACCESS_TOKEN_EXPIRE_MINUTES=60
 GEMINI_API_KEY=your-gemini-api-key
 REQUIRE_EMAIL_VERIFICATION=false
 EMAIL_VERIFICATION_EXPIRE_HOURS=24
+PASSWORD_RESET_EXPIRE_MINUTES=30
+
+# Optional SMTP (required only for real email delivery)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+FROM_EMAIL=your-email@gmail.com
+
+# Dev fallback: return reset URL in API response when SMTP is unavailable
+EXPOSE_RESET_LINK=true
 ```
 
 ⚠️ **Never commit `.env` files to version control**
+
+### SMTP Quick Setup (Gmail)
+
+1. Enable 2-Step Verification on your Google account.
+2. Create an App Password for Mail.
+3. Put those values in `SMTP_USER` and `SMTP_PASS`.
+4. Restart backend after updating `backend/.env`.
+
+If SMTP is not configured, forgot-password still works in dev mode when `EXPOSE_RESET_LINK=true` by returning a reset URL directly from the API.
 
 ---
 
