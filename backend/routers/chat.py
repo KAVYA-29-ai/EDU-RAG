@@ -86,6 +86,3 @@ async def cleanup_old_messages():
         return {"deleted": deleted}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-        return {"deleted": resp.count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

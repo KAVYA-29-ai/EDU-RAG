@@ -1,5 +1,4 @@
 
-
 """Typed API contracts for EduRag.
 
 This module intentionally keeps validation logic close to schemas so route

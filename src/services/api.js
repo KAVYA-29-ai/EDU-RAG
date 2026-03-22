@@ -280,6 +280,21 @@ export const ragAPI = {
     getTrendingTopics: async () => {
         return apiFetch('/rag/trending');
     },
+
+    getPDFSummary: async (pdfId, language = 'english') => {
+        return apiFetch(`/rag/pdfs/${pdfId}/summary?language=${encodeURIComponent(language)}`);
+    },
+
+    getRecommendations: async () => {
+        return apiFetch('/rag/recommendations');
+    },
+
+    generateStudyPlan: async (query, language = 'english') => {
+        return apiFetch('/rag/study-plan', {
+            method: 'POST',
+            body: JSON.stringify({ query, language }),
+        });
+    },
 };
 
 // ========================================

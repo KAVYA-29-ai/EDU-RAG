@@ -3,7 +3,7 @@
 Users Router for MINI-RAG Backend
 
 Provides endpoints for user management, including listing users, updating profiles, and filtering by role or status.
-All user data is stored and queried from Supabase..
+All user data is stored and queried from Supabase.
 """
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional

@@ -137,6 +137,3 @@ async def get_top_topics(limit: int = 10, current_user: dict = Depends(require_r
         return [{"topic": q, "count": c, "trend": "stable"} for q, c in counts.most_common(limit)]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-        return [{"topic": q, "count": c, "trend": "stable"} for q, c in counts.most_common(limit)]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

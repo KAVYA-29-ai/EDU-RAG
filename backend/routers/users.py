@@ -173,5 +173,3 @@ async def delete_user(user_id: int, current_user: dict = Depends(require_roles("
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
