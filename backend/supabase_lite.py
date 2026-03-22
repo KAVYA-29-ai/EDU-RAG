@@ -378,7 +378,3 @@ class SupabaseLiteClient:
 def create_client(url: str, key: str) -> SupabaseLiteClient:
     """Factory — mirrors `supabase.create_client`."""
     return SupabaseLiteClient(url, key)
-
-def create_client(url: str, key: str) -> SupabaseLiteClient:
-    """Factory — mirrors `supabase.create_client`."""
-    return SupabaseLiteClient(url, key)

@@ -1,7 +1,7 @@
 /**
  * App.js - Main React application entry point for MINI-RAG frontend.
  *
- * Sets up routing for all main pages: Home, Auth, Student, Teacher, and Admin dashboards..
+ * Sets up routing for all main pages: Home, Auth, Student, Teacher, and Admin dashboards.
  */
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';

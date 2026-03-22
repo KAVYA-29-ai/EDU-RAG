@@ -61,6 +61,3 @@ async def get_student_feedback(
         return resp.data or []
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-        return resp.data or []
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
