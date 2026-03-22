@@ -181,6 +181,3 @@ class TestSearchHistory:
         r = _client.get("/api/rag/search-history", headers=_auth())
         assert r.status_code == 200
         assert isinstance(r.json(), list)
-        r = _client.get("/api/rag/search-history", headers=_auth())
-        assert r.status_code == 200
-        assert isinstance(r.json(), list)
