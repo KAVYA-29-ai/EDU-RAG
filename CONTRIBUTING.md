@@ -46,8 +46,28 @@ Use these prefixes for clean commits:
 - `docs:` — documentation changes
 - `test:` — adding tests
 - `refactor:` — code refactoring
+- `chore:` — maintenance tasks
+- `ci:` — CI/workflow updates
 
 Example: `feat: add support for DOCX file upload`
+
+## Commit Conventions (Required)
+- Keep commits focused and atomic. One intent per commit.
+- Avoid noisy messages like `Update file` or `Add files via upload`.
+- Prefer imperative, scoped messages such as:
+	- `fix: handle missing JWT secret at request time`
+	- `docs: update auth endpoint examples`
+	- `ci: run backend pytest with coverage`
+
+## Pull Request Checklist
+Before opening a PR, confirm all items below:
+
+- [ ] PR title follows conventional format (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `ci:`)
+- [ ] PR description explains problem, solution, and impact
+- [ ] Test evidence is included (commands + key output)
+- [ ] No generated artifacts committed (`build/`, coverage reports, local IDE files)
+- [ ] Related docs updated if API or behavior changed
+- [ ] Changes are split into logical commits with meaningful messages
 
 ## Reporting Issues
 - Use the [GitHub Issues](https://github.com/KAVYA-29-ai/MINI-RAG/issues) tab
