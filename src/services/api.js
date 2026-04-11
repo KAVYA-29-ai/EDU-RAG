@@ -131,6 +131,34 @@ const apiFetch = async (endpoint, options = {}) => {
     throw lastError || new Error('API request failed. Backend may be unavailable.');
 };
 
+const isMethodNotAllowedError = (error) => {
+    const message = error?.message || '';
+    return /method not allowed|\(405\)/i.test(message);
+};
+
+const apiFetchWithMethodFallback = async (endpoint, methods, options = {}) => {
+    let lastError = null;
+
+    for (let index = 0; index < methods.length; index++) {
+        const method = methods[index];
+        const isLastMethod = index === methods.length - 1;
+
+        try {
+            return await apiFetch(endpoint, {
+                ...options,
+                method,
+            });
+        } catch (error) {
+            lastError = error;
+            if (isLastMethod || !isMethodNotAllowedError(error)) {
+                throw error;
+            }
+        }
+    }
+
+    throw lastError || new Error('API request failed.');
+};
+
 // ========================================
 // Auth API
 // ========================================
@@ -180,8 +208,7 @@ export const authAPI = {
     },
 
     changePassword: async (currentPassword, newPassword) => {
-        return apiFetch('/auth/change-password', {
-            method: 'POST',
+        return apiFetchWithMethodFallback('/auth/change-password', ['POST', 'PATCH', 'PUT'], {
             body: JSON.stringify({
                 current_password: currentPassword,
                 new_password: newPassword,
@@ -219,8 +246,7 @@ export const usersAPI = {
     },
 
     update: async (userId, updates) => {
-        return apiFetch(`/users/${userId}`, {
-            method: 'PATCH',
+        return apiFetchWithMethodFallback(`/users/${userId}`, ['PATCH', 'PUT', 'POST'], {
             body: JSON.stringify(updates),
         });
     },
