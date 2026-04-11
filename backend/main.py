@@ -68,14 +68,20 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.extension import _rate_limit_exceeded_handler
 from dotenv import load_dotenv
 from pathlib import Path
-from core.rate_limit import limiter
-from services.realtime import WebSocketConnectionManager
+
+try:
+    # Preferred import path when loaded as package (e.g., Vercel).
+    from backend.core.rate_limit import limiter
+    from backend.services.realtime import WebSocketConnectionManager
+    from backend.routers import auth, users, feedback, student_feedback, rag, analytics, chat
+except ImportError:
+    # Local fallback for `uvicorn main:app` when cwd is backend/.
+    from core.rate_limit import limiter
+    from services.realtime import WebSocketConnectionManager
+    from routers import auth, users, feedback, student_feedback, rag, analytics, chat
 
 # Load environment variables
 load_dotenv()
-
-# Import routers (absolute imports for Vercel)
-from routers import auth, users, feedback, student_feedback, rag, analytics, chat
 
 # Create FastAPI app
 
