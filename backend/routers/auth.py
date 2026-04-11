@@ -11,6 +11,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 import os
+import sys
 import smtplib
 from email.message import EmailMessage
 from urllib.parse import urlencode
@@ -22,6 +23,11 @@ from database import get_supabase
 from core.rate_limit import limiter
 
 load_dotenv()
+
+# Keep a single module instance when imported as either `backend.routers.auth`
+# or `routers.auth`, so runtime monkeypatching affects the active router.
+if __name__ == "backend.routers.auth":
+    sys.modules.setdefault("routers.auth", sys.modules[__name__])
 
 router = APIRouter()
 security = HTTPBearer()
@@ -39,8 +45,15 @@ EXPOSE_RESET_LINK = os.getenv("EXPOSE_RESET_LINK", "true").lower() in {"1", "tru
 # Temporary product decision: keep verification OFF until resend flow is implemented.
 EMAIL_VERIFICATION_REQUIRED = False
 
-if not JWT_SECRET:
-    raise RuntimeError("JWT_SECRET is required. Set it in your environment or .env file.")
+
+def _get_jwt_secret() -> str:
+    """Return configured JWT secret or raise a request-safe configuration error."""
+    if not JWT_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service is not configured (missing JWT_SECRET)",
+        )
+    return JWT_SECRET
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -81,7 +94,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(to_encode, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -91,7 +104,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     """
     token = credentials.credentials
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         user_id: int = payload.get("user_id")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -139,7 +152,7 @@ def create_email_verification_token(user_id: int, email: str) -> str:
         "token_type": "email_verification",
         "exp": expires_at,
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def create_password_reset_token(user_id: int, email: str) -> str:
@@ -151,7 +164,7 @@ def create_password_reset_token(user_id: int, email: str) -> str:
         "token_type": "password_reset",
         "exp": expires_at,
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def _send_password_reset_email(to_email: str, reset_url: str) -> bool:
@@ -360,7 +373,7 @@ async def reset_password(payload: ResetPasswordRequest):
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
 
     try:
-        token_payload = jwt.decode(payload.token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        token_payload = jwt.decode(payload.token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if token_payload.get("token_type") != "password_reset":
             raise HTTPException(status_code=400, detail="Invalid reset token")
 
@@ -445,7 +458,7 @@ async def google_login_url():
 async def verify_email(token: str = Query(..., min_length=1)):
     """Verify a user's email using a signed verification token."""
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("token_type") != "email_verification":
             raise HTTPException(status_code=400, detail="Invalid verification token")
 
